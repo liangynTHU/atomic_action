@@ -37,6 +37,12 @@ def arm_components(trajectory: np.ndarray, arm: str) -> Tuple[np.ndarray, np.nda
 def moving_average(values: np.ndarray, window: int) -> np.ndarray:
     if window <= 1:
         return np.asarray(values, dtype=np.float64).copy()
+    # ``np.convolve(..., mode="same")`` returns the larger of the signal and
+    # kernel lengths.  Clamp the kernel so truncated failure episodes still
+    # preserve their original frame count.
+    window = min(int(window), len(values))
+    if window <= 1:
+        return np.asarray(values, dtype=np.float64).copy()
     kernel = np.ones(window, dtype=np.float64) / float(window)
     return np.convolve(np.asarray(values, dtype=np.float64), kernel, mode="same")
 

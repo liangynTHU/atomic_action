@@ -3,7 +3,11 @@ import unittest
 import numpy as np
 
 from atomic_seg.evaluation import boundary_metrics
-from atomic_seg.features import gripper_events, local_motion_statistics
+from atomic_seg.features import (
+    gripper_events,
+    local_motion_statistics,
+    moving_average,
+)
 from atomic_seg.geometry import quaternion_angle, slerp
 from atomic_seg.segmentation import (
     SegmenterConfig,
@@ -46,6 +50,12 @@ class GeometryTests(unittest.TestCase):
 
 
 class SegmentationTests(unittest.TestCase):
+    def test_moving_average_preserves_very_short_episode_length(self):
+        values = np.array([1.0])
+        averaged = moving_average(values, window=5)
+        self.assertEqual(averaged.shape, values.shape)
+        np.testing.assert_allclose(averaged, values)
+
     def test_geometric_knots_share_endpoints(self):
         primitives = geometric_primitives_from_knots([0, 5, 10], 11)
         self.assertEqual(
