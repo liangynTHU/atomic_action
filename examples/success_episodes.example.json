@@ -1,0 +1,20 @@
+{
+  "schema": "successful_episode_manifest",
+  "episodes": [
+    {
+      "episode_index": 0,
+      "success": true,
+      "success_provenance": "Replace with the local verification record for a fully correct episode."
+    },
+    {
+      "episode_index": 1,
+      "success": true,
+      "success_provenance": "Replace with the local verification record for a fully correct episode."
+    },
+    {
+      "episode_index": 2,
+      "success": true,
+      "success_provenance": "Replace with the local verification record for a fully correct episode."
+    }
+  ]
+}

@@ -1,63 +1,167 @@
-"""Dataset and JSON I/O helpers."""
+"""Portable dataset, manifest and JSON I/O helpers."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 import numpy as np
 import pyarrow.parquet as pq
 
 
-DEFAULT_JOINT_ROOT = Path(
-    "/apdcephfs_gy7/share_305004851/hunyuan/yinanliang/wam/"
-    "fastwam/data/robotwin2.0"
-)
-DEFAULT_ENDPOSE_ROOT = Path(
-    "/apdcephfs_gy7/share_305004851/hunyuan/yinanliang/wam/"
-    "cosmos3/data/robotwin2.0-endpose"
-)
-DEFAULT_REFERENCE_JSON = Path(
-    "/mnt/ybw/workspace/divide_action/outputs/full/"
-    "atomic_segments_cot_merged_grasp_task01.json"
-)
+CAMERA_KEYS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
+
+
+@dataclass(frozen=True)
+class SuccessEpisode:
+    """One curated, fully correct demonstration."""
+
+    episode_index: int
+    task: str = ""
+    success: bool = True
+    source_episode_id: str | None = None
+    success_provenance: str = ""
+
+    def __post_init__(self) -> None:
+        if self.episode_index < 0:
+            raise ValueError("episode_index must be non-negative")
+        if self.success is not True:
+            raise ValueError(
+                "this repository only accepts fully correct episodes"
+            )
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(child) for child in value]
+    return value
 
 
 def load_json(path: Path | str) -> Any:
-    with Path(path).open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    with Path(path).open("r", encoding="utf-8") as stream:
+        return json.load(stream)
 
 
-def save_json(path: Path | str, obj: Any) -> None:
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as handle:
-        json.dump(obj, handle, ensure_ascii=False, indent=2)
+def save_json(path: Path | str, value: Any) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(
+            _jsonable(value),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
-def load_info(root: Path | str) -> Dict[str, Any]:
-    return load_json(Path(root) / "meta" / "info.json")
+def read_jsonl(path: Path | str) -> Iterator[dict[str, Any]]:
+    with Path(path).open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"{path}:{line_number}: expected a JSON object"
+                )
+            yield value
 
 
-def load_episode_tasks(root: Path | str) -> Dict[int, str]:
-    path = Path(root) / "meta" / "episodes.jsonl"
-    tasks: Dict[int, str] = {}
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            record = json.loads(line)
-            choices = record.get("tasks") or []
-            tasks[int(record["episode_index"])] = choices[0] if choices else ""
-    return tasks
+def write_jsonl(
+    path: Path | str,
+    values: Iterable[Mapping[str, Any]],
+) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8") as stream:
+        for value in values:
+            stream.write(
+                json.dumps(
+                    _jsonable(value),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                + "\n"
+            )
 
 
-def episode_path(root: Path | str, episode_index: int, chunk_size: int = 1000) -> Path:
+def dataset_info(root: Path | str) -> dict[str, Any]:
+    value = load_json(Path(root) / "meta" / "info.json")
+    if not isinstance(value, dict):
+        raise ValueError("meta/info.json must contain an object")
+    return value
+
+
+def validate_end_pose_dataset(root: Path | str) -> Path:
+    """Require the 16-D xyz+quaternion+gripper state layout."""
+
+    data_root = Path(root)
+    info = dataset_info(data_root)
+    shape = (
+        info.get("features", {})
+        .get("observation.state", {})
+        .get("shape")
+    )
+    if list(shape or []) != [16]:
+        raise ValueError(
+            f"{data_root} stores observation.state shape {shape}; "
+            "the segmentation core requires 16-D end-pose state"
+        )
+    return data_root
+
+
+def episode_path(
+    root: Path | str,
+    episode_index: int,
+    chunk_size: int = 1000,
+) -> Path:
+    episode = int(episode_index)
     return (
         Path(root)
         / "data"
-        / f"chunk-{episode_index // chunk_size:03d}"
-        / f"episode_{episode_index:06d}.parquet"
+        / f"chunk-{episode // chunk_size:03d}"
+        / f"episode_{episode:06d}.parquet"
     )
+
+
+def video_path(
+    root: Path | str,
+    episode_index: int,
+    camera_key: str,
+) -> Path:
+    if camera_key not in CAMERA_KEYS:
+        raise ValueError(
+            f"camera_key must be one of {CAMERA_KEYS}, got {camera_key!r}"
+        )
+    episode = int(episode_index)
+    relative = (
+        Path(f"chunk-{episode // 1000:03d}")
+        / f"observation.images.{camera_key}"
+        / f"episode_{episode:06d}.mp4"
+    )
+    preferred = Path(root) / "videos" / relative
+    if preferred.is_file():
+        return preferred
+    legacy = Path(root) / "videos_old" / relative
+    if legacy.is_file():
+        return legacy
+    raise FileNotFoundError(preferred)
 
 
 def load_episode(
@@ -70,55 +174,93 @@ def load_episode(
         "frame_index",
         "task_index",
     ),
-) -> Dict[str, np.ndarray]:
+) -> dict[str, Any]:
     path = episode_path(root, episode_index)
+    if not path.is_file():
+        raise FileNotFoundError(path)
     available = pq.read_schema(path).names
     selected = [name for name in columns if name in available]
     table = pq.read_table(path, columns=selected)
-    result: Dict[str, np.ndarray] = {}
+    result: dict[str, Any] = {}
     for name in selected:
-        values = table.column(name).to_pylist()
-        result[name] = np.asarray(values)
-    result["path"] = np.asarray(str(path))
+        result[name] = np.asarray(table.column(name).to_pylist())
+    result["path"] = path
     return result
 
 
-def infer_pose_root(requested_root: Path | str) -> Path:
-    """Resolve a 16D xyz+quaternion+gripper dataset.
+def load_episode_tasks(root: Path | str) -> dict[int, str]:
+    """Return the first published task prompt for every episode."""
 
-    The path supplied by the user is the 14D joint-space dataset. The same
-    episodes have already been converted to end-effector pose under the
-    sibling cosmos3 tree. We prefer an explicitly supplied 16D root and fall
-    back to that known paired dataset otherwise.
-    """
-
-    requested = Path(requested_root)
-    info = load_info(requested)
-    shape = info["features"]["observation.state"]["shape"]
-    if list(shape) == [16]:
-        return requested
-    if DEFAULT_ENDPOSE_ROOT.exists():
-        return DEFAULT_ENDPOSE_ROOT
-    raise ValueError(
-        f"{requested} stores shape {shape}, not 16D end-pose data, and the paired "
-        f"end-pose root {DEFAULT_ENDPOSE_ROOT} is unavailable."
-    )
+    path = Path(root) / "meta" / "episodes.jsonl"
+    tasks: dict[int, str] = {}
+    for record in read_jsonl(path):
+        choices = record.get("tasks") or []
+        tasks[int(record["episode_index"])] = (
+            str(choices[0]) if choices else ""
+        )
+    return tasks
 
 
-def load_reference(
-    path: Path | str | None, episode_index: int
-) -> Optional[Dict[str, Any]]:
-    if not path:
-        return None
-    source = Path(path)
-    if not source.exists():
-        return None
-    blob = load_json(source)
-    record = blob.get(str(episode_index)) if isinstance(blob, dict) else None
-    return record
+def load_success_manifest(path: Path | str) -> list[SuccessEpisode]:
+    """Load a manifest and reject non-success/recovery entries."""
+
+    value = load_json(path)
+    if not isinstance(value, dict) or not isinstance(
+        value.get("episodes"),
+        list,
+    ):
+        raise ValueError("manifest must contain an episodes array")
+    episodes: list[SuccessEpisode] = []
+    seen: set[int] = set()
+    for index, item in enumerate(value["episodes"]):
+        if not isinstance(item, dict):
+            raise ValueError(f"episodes[{index}] must be an object")
+        episode = SuccessEpisode(
+            episode_index=int(item["episode_index"]),
+            task=str(item.get("task", "")).strip(),
+            success=item.get("success") is True,
+            source_episode_id=(
+                str(item["source_episode_id"])
+                if item.get("source_episode_id")
+                else None
+            ),
+            success_provenance=str(
+                item.get("success_provenance", "")
+            ).strip(),
+        )
+        if episode.episode_index in seen:
+            raise ValueError(
+                f"duplicate episode_index {episode.episode_index}"
+            )
+        seen.add(episode.episode_index)
+        episodes.append(episode)
+    if not episodes:
+        raise ValueError("success manifest contains no episodes")
+    return episodes
 
 
-def parse_episode_ids(spec: str | Iterable[int]) -> List[int]:
-    if isinstance(spec, str):
-        return [int(token) for token in spec.split(",") if token.strip()]
-    return [int(value) for value in spec]
+def resolve_episode_tasks(
+    root: Path | str,
+    episodes: Sequence[SuccessEpisode],
+) -> list[SuccessEpisode]:
+    tasks = load_episode_tasks(root)
+    output: list[SuccessEpisode] = []
+    for episode in episodes:
+        task = episode.task or tasks.get(episode.episode_index, "")
+        if not task:
+            raise ValueError(
+                f"episode {episode.episode_index} has no task instruction"
+            )
+        output.append(
+            SuccessEpisode(
+                episode_index=episode.episode_index,
+                task=task,
+                success=True,
+                source_episode_id=(
+                    episode.source_episode_id
+                    or f"episode_{episode.episode_index:06d}"
+                ),
+                success_provenance=episode.success_provenance,
+            )
+        )
+    return output

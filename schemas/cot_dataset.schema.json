@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cot_dataset.schema.json",
+  "title": "Atomic multimodal CoT training row",
+  "type": "object",
+  "required": [
+    "schema",
+    "sample_id",
+    "episode_id",
+    "episode_index",
+    "segment_index",
+    "task",
+    "success",
+    "images",
+    "image_roles",
+    "image_frames",
+    "target",
+    "conversations"
+  ],
+  "properties": {
+    "schema": {"const": "atomic_cot_training_row"},
+    "sample_id": {"type": "string", "minLength": 1},
+    "episode_id": {"type": "string", "minLength": 1},
+    "episode_index": {"type": "integer", "minimum": 0},
+    "segment_index": {"type": "integer", "minimum": 0},
+    "task": {"type": "string", "minLength": 1},
+    "success": {"const": true},
+    "images": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "image_roles": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "image_frames": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "integer", "minimum": 0}
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "guide_action",
+        "primary_action_verb",
+        "sub_task",
+        "num_chunks"
+      ],
+      "properties": {
+        "guide_action": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": {"type": "number"}
+        },
+        "primary_action_verb": {"type": "string"},
+        "sub_task": {"type": "string"},
+        "num_chunks": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": true
+    },
+    "conversations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "type": "object",
+          "properties": {
+            "from": {"const": "human"},
+            "value": {"type": "string"}
+          },
+          "required": ["from", "value"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "from": {"const": "gpt"},
+            "value": {"type": "string"}
+          },
+          "required": ["from", "value"]
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}

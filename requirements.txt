@@ -1,2 +1,4 @@
 numpy>=1.26
 pyarrow>=14
+Pillow>=10
+av>=12,<16

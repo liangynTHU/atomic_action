@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "action_dataset.schema.json",
+  "title": "Atomic action-only dataset",
+  "type": "object",
+  "required": [
+    "schema",
+    "success_only",
+    "episode_count",
+    "segment_count",
+    "episodes"
+  ],
+  "properties": {
+    "schema": {"const": "atomic_action_dataset"},
+    "success_only": {"const": true},
+    "episode_count": {"type": "integer", "minimum": 1},
+    "segment_count": {"type": "integer", "minimum": 1},
+    "episodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "schema",
+          "episode_id",
+          "episode_index",
+          "task",
+          "success",
+          "frame_count",
+          "segments"
+        ],
+        "properties": {
+          "schema": {"const": "atomic_action_episode"},
+          "episode_id": {"type": "string", "minLength": 1},
+          "episode_index": {"type": "integer", "minimum": 0},
+          "task": {"type": "string", "minLength": 1},
+          "success": {"const": true},
+          "frame_count": {"type": "integer", "minimum": 1},
+          "segments": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "segment_index",
+                "start_frame",
+                "end_frame",
+                "left_action",
+                "right_action",
+                "primary_action_verb",
+                "sub_task",
+                "guide_action",
+                "num_chunks"
+              ],
+              "properties": {
+                "segment_index": {"type": "integer", "minimum": 0},
+                "start_frame": {"type": "integer", "minimum": 0},
+                "end_frame": {"type": "integer", "minimum": 0},
+                "left_action": {"type": "string"},
+                "right_action": {"type": "string"},
+                "primary_action_verb": {"type": "string"},
+                "sub_task": {"type": "string"},
+                "guide_action": {
+                  "type": "array",
+                  "minItems": 16,
+                  "maxItems": 16,
+                  "items": {"type": "number"}
+                },
+                "num_chunks": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

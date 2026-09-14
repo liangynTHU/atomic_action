@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atomic-episode-segmentation"
+version = "1.0.0"
+description = "State-only atomic segmentation and successful-episode CoT data generation"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pyarrow>=14",
+  "Pillow>=10",
+  "av>=12,<16",
+]
+
+[tool.setuptools.packages.find]
+include = ["atomic_seg*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
