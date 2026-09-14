@@ -1,355 +1,332 @@
 # Atomic Episode Segmentation
 
-面向 RoboTwin 双臂轨迹的、可解释且低成本的 **state-only kinematic atomic motion segmentation** 项目。
+这是一个面向**完全正确机器人演示**的精简数据流水线。仓库只保留：
 
-当前主线已经从 V5 继续迭代到 V8：
+1. 从 16 维双臂末端状态和时间戳划分 atomic action；
+2. 生成不带 CoT 的纯动作监督；
+3. 为完整成功 episode 批量生成多模态 CoT 数据；
+4. 为单条成功 episode 生成 CoT 数据；
+5. 生成分割可视化和完整 episode 可视化。
 
-```text
-V5  strong events + persistent phases（按帧阈值）
- ↓
-V6  timestamp-normalized state evidence
- ↓
-V7  successor-trend-onset boundary
- ↓
-V8  factorized left/right primitives + coordination timeline
-```
+失败、漂移、策略偏差和 recovery 数据不在当前运行范围内。历史研究过程统一记录在
+[`docs/MILESTONES.md`](docs/MILESTONES.md)，但不再作为生产代码入口。
 
-**V8 是当前推荐版本。** V1–V7 保留为 baseline、消融或中间演进版本。
-
----
-
-## 1. 决策输入边界
-
-V6–V8 的切分决策严格只使用：
+## 1. 最终目录
 
 ```text
-observation.state
-├── left:  xyz + quaternion + gripper
-└── right: xyz + quaternion + gripper
+atomic_seg/
+  config.py          分割参数
+  features.py        状态特征
+  geometry.py        四元数运算
+  segmentation.py    最终 state-only 双臂分割
+  io.py              数据集、manifest、JSON/JSONL I/O
+  media.py           三相机视频抽帧
+  generation.py      action-only 与 CoT 数据生成
+  visualization.py   两类可视化
 
-timestamp
+scripts/
+  segment_episodes.py
+  generate_action_data.py
+  generate_cot_data.py
+  generate_episode_cot.py
+  build_visualizations.py
+
+schemas/
+  action_dataset.schema.json
+  cot_dataset.schema.json
+
+examples/
+  success_episodes.json
+  visualizations/
+
+docs/
+  MILESTONES.md
 ```
 
-以下内容**不参与边界决策**：
+运行代码、脚本、schema 和测试均使用稳定功能名称，不使用研究迭代编号。
 
-- image / video；
-- `action_config`；
-- task text / instruction；
-- object label；
-- data config 中的任务语义。
+## 2. 输入数据合同
 
-视觉或 data config 可以在切分完成、边界锁定以后，用于：
-
-- caption；
-- instruction；
-- object / target；
-- grasp / place / operate / handover 等上层语义；
-- gripper increase/decrease 到 open/close 的语义映射。
-
-但这些后处理信息不能反向移动 V6–V8 边界。JSON 中会显式保存：
+当前分割算法要求 RoboTwin/LeRobot 风格目录：
 
 ```text
-selection.decision_input_policy
+DATA_ROOT/
+  meta/info.json
+  meta/episodes.jsonl
+  data/chunk-000/episode_000000.parquet
+  videos/chunk-000/observation.images.cam_high/episode_000000.mp4
+  videos/chunk-000/observation.images.cam_left_wrist/episode_000000.mp4
+  videos/chunk-000/observation.images.cam_right_wrist/episode_000000.mp4
 ```
 
----
-
-## 2. 方法定位
-
-本项目区分三层 atomicity：
-
-1. **Geometric primitive**：轨迹能否由简单 piecewise geodesic 近似；
-2. **Kinematic atomic primitive**：片段内是否具有相对稳定的 move / turn / lift / lower / gripper trend；
-3. **Semantic action**：包含对象、接触和任务语义，如 grasp bottle、place cup、handover。
-
-本项目的切分器负责第 2 层。仅依赖 state 和 timestamp，不能可靠恢复完整第 3 层。
-
-推荐的后续数据流是：
+Parquet 至少包含：
 
 ```text
-state-only V8 boundaries
-    → freeze boundaries
-    → optional visual/data-config annotation
-    → caption / instruction / semantic operation
+observation.state   [T, 16]
+action              [T, 16]
+timestamp           [T]
+frame_index         [T]
 ```
 
----
-
-## 3. V1–V8 演进
-
-| 版本 | 当前命名 | 方法角色 |
-|---|---|---|
-| V1 | `piecewise_geodesic_approximation` | Piecewise-geodesic reconstruction baseline |
-| V2 | `geometry_aware_reconstruction` | SO(3)、夹爪、Huber loss reconstruction baseline |
-| V3 | `motion_change_point_ablation` | derivative-domain change-point ablation |
-| V4 | `strong_event_segmentation` | pause / gripper stabilization strong-event ablation |
-| V5 | `event_phase_atomic_motion` | strong event + persistent phase，仍含固定帧尺度 |
-| **V6** | **`time_normalized_state_evidence`** | **所有持续时间由 timestamp 换算，边界决策明确 state-only** |
-| **V7** | **`successor_onset_state_transitions`** | **把 phase crossing 修正为后继动作趋势起点** |
-| **V8** | **`factorized_bimanual_state_motion`** | **左右手独立 primitive 流 + 派生 coordination timeline** |
-
----
-
-## 4. V6：物理时间归一化
-
-V5 的不少阈值隐含约 50 Hz。V6 改为先从 timestamp 估计采样周期，再把：
-
-- minimum segment；
-- pause duration；
-- phase window；
-- phase persistence；
-- evidence merge radius；
-- gripper 前后搜索窗口；
-
-全部从秒转换为当前 episode 的帧数。
-
-速度使用物理量：
+16 维顺序固定为：
 
 ```text
-translation speed: m/s
-angular speed: rad/s
-gripper rate: normalized amplitude/s
+left xyz + left quaternion(wxyz) + left gripper
+right xyz + right quaternion(wxyz) + right gripper
 ```
 
-夹爪幅值会按 episode、按手做 robust amplitude normalization，但**不会仅凭 state 猜测高值究竟表示 open 还是 closed**。因此 V6–V8 的切分证据使用：
+边界判断只使用 `observation.state` 和 `timestamp`。图像、任务文本、action 和
+success 标签不会移动边界。
 
-```text
-gripper_increase
-gripper_decrease
+## 3. 成功 episode manifest
+
+所有生成入口都要求显式的成功清单：
+
+```json
+{
+  "schema": "successful_episode_manifest",
+  "episodes": [
+    {
+      "episode_index": 18,
+      "success": true,
+      "success_provenance": "Manually verified successful demonstration."
+    }
+  ]
+}
 ```
 
-而不是把极性假设混入边界决策。
+规则：
 
----
+- `success` 必须严格为 `true`；
+- `success=false` 会立即报错；
+- 不接受 recovery、failure prefix 或结果不明确的轨迹；
+- `task` 可选，缺失时读取 `meta/episodes.jsonl` 的第一条任务文本。
 
-## 5. V7：后继动作趋势起点原则
-
-考虑两个动作分量重叠的情况：
-
-```text
-旧动作分数：逐渐下降
-新动作分数：逐渐上升
-```
-
-不能把两条曲线的交点、旧动作完全结束点或 centered-window label 翻转点直接当边界。
-
-V7 使用的原则是：
-
-> 只要新动作已经出现可持续、可确认的上升趋势，边界放在新动作趋势的最早稳定起点。
-
-若新动作为动作 1、旧动作为动作 2，则：
-
-```text
-boundary = onset(action 1)
-```
-
-而不是：
-
-```text
-boundary = crossing(action 1, action 2)
-boundary = end(action 2)
-```
-
-实现中会在 persistent phase 边界附近搜索，并记录：
-
-- `original_frame`；
-- `frame`；
-- predecessor score before/after；
-- successor score before/after；
-- `previous_trend_falling`；
-- `successor_trend_rising`；
-- `competing_trends_detected`；
-- `boundary_policy = earliest_persistent_successor_trend_onset`。
-
----
-
-## 6. V8：左右手如何划分
-
-V5/V6/V7 的 joint fusion 可能把时间上接近的左右手证据直接合并，导致：
-
-- 左手先启动、右手后启动时丢掉一个边界；
-- 两手在同一时段做不同 phase 时被压成一个标签；
-- 依次抓取被误当成 simultaneous dual grasp。
-
-V8 改为两层输出。
-
-### 6.1 Primary：每只手独立 primitive timeline
-
-左右手分别完成：
-
-```text
-state evidence
-→ successor-onset refinement
-→ same-arm merge/filter
-→ per-arm primitive timeline
-```
-
-JSON 路径：
-
-```text
-selection.per_arm_boundaries.left
-selection.per_arm_boundaries.right
-selection.per_arm_boundary_evidence
-selection.arm_timelines.left
-selection.arm_timelines.right
-```
-
-这两条 timeline 是 V8 的 primary result。
-
-### 6.2 Derived：双臂 coordination timeline
-
-随后才从左右手 timeline 派生统一切片：
-
-- 同步且兼容的 phase/gripper 事件可以共享 joint boundary；
-- 时间错开的事件保留为不同边界；
-- 同时发生但 phase 不同的两手动作不强行改成同一动作；
-- joint segment 保存 `left_primitive_id` 和 `right_primitive_id`；
-- segment relation 为：
-  - `left_only`；
-  - `right_only`；
-  - `dual_same_phase`；
-  - `dual_different_phase`；
-  - `both_still`。
-
-### 6.3 双手 gripper 关系
-
-state-only 层只做可验证的运动关系判断：
-
-- 同方向且近同步：`synchronous_dual_gripper_event`；
-- 同方向但明显错开：`sequential_same_direction_dual_gripper_events`；
-- 两手方向相反：`opposing_gripper_transition_candidate`。
-
-最后一种可以作为 handover / exchange 的候选，但仅凭 state 和未知 gripper 极性，不直接宣称 donor / recipient。视觉、接触信息或 data config 可在后处理标注该语义。
-
----
-
-## 7. 数据与区间定义
-
-用户提供的 joint-space root：
-
-```text
-/apdcephfs_gy7/share_305004851/hunyuan/yinanliang/wam/fastwam/data/robotwin2.0
-```
-
-程序会解析到配对的 16D end-pose 数据：
-
-```text
-/apdcephfs_gy7/share_305004851/hunyuan/yinanliang/wam/cosmos3/data/robotwin2.0-endpose
-```
-
-每臂：
-
-```text
-xyz + quaternion(wxyz) + continuous gripper
-```
-
-统一采用半开区间：
-
-```text
-segment = [start_boundary, end_boundary)
-frame id = 0 ... T-1
-boundary = 0 ... T
-```
-
-JSON 兼容历史格式，仍保存 inclusive：
-
-```text
-start_frame
-end_frame
-```
-
-其中下一个边界为 `end_frame + 1`。
-
----
-
-## 8. 运行
-
-### 推荐：只跑 V6–V8
+## 4. 安装
 
 ```bash
-cd /mnt/lyn/workspace/atomic_episode_segmentation
-
-python run_experiments.py \
-  --data-root /apdcephfs_gy7/share_305004851/hunyuan/yinanliang/wam/fastwam/data/robotwin2.0 \
-  --episodes 0,550,6100 \
-  --versions 6,7,8 \
-  --vertical-direction 0,0,1 \
-  --min-segment-seconds 0.10 \
-  --phase-window-seconds 0.18 \
-  --phase-min-seconds 0.10 \
-  --onset-search-seconds 0.18 \
-  --cross-arm-sync-seconds 0.08 \
-  --output-dir outputs
+python -m pip install -r requirements.txt
 ```
 
-### 全部消融
+或者：
 
 ```bash
-python run_experiments.py --versions 1,2,3,4,5,6,7,8
+python -m pip install -e .
 ```
 
-### 测试
+## 5. Atomic action 分割
 
 ```bash
-python -m unittest discover -s tests -v
+python scripts/segment_episodes.py \
+  --data-root /path/to/robotwin-endpose \
+  --manifest /path/to/success_episodes.json \
+  --output-dir artifacts/segmentation
 ```
 
----
+输出每条 episode 的：
 
-## 9. 如何看 SVG 可视化
+- joint boundaries；
+- left/right 独立 boundaries；
+- boundary evidence；
+- 左右臂 primitive timeline；
+- 每段 `left_action` / `right_action`；
+- coordination relation。
 
-每个 SVG 从上到下为：
+核心 Python API：
 
-1. 左手 xyz；
-2. 右手 xyz；
-3. 左右手 raw gripper；
-4. 左右手 state motion energy；
-5. 左右手独立 phase lane；
-6. joint segment 标签。
+```python
+from atomic_seg import segment_episode
 
-颜色：
+result = segment_episode(states, timestamps)
+```
 
-- 蓝线：左手信号；
-- 橙线：右手信号；
-- 红色虚线 `S`：strong state event；
-- 紫色虚线 `P`：persistent phase boundary；
-- 蓝色短虚线 `O`：V7/V8 successor-onset-refined boundary；
-- 绿色实线：已有 weak reference，只用于对照，不参与算法。
+算法包含：
 
-边界标记示例：
+- timestamp 归一化的物理速度；
+- motion-energy pause evidence；
+- direction-neutral gripper transition evidence；
+- persistent local phase；
+- successor-trend-onset refinement；
+- 左右臂独立 primitive timeline；
+- 派生的双臂 coordination timeline。
+
+## 6. 生成不带 CoT 的动作数据
+
+```bash
+python scripts/generate_action_data.py \
+  --data-root /path/to/robotwin-endpose \
+  --manifest /path/to/success_episodes.json \
+  --output-dir artifacts/action_data
+```
+
+主要输出：
 
 ```text
-B3:L-O
+artifacts/action_data/train.json
+artifacts/action_data/manifest.json
 ```
 
-表示：
-
-- 第 3 个输出边界；
-- 来源为 left arm；
-- 由 onset policy 放置。
-
-SVG 底部的 `Boundary audit key` 给出简写；完整证据请查看同名 JSON：
+每个 segment 包含：
 
 ```text
-selection.boundary_evidence
-selection.per_arm_boundary_evidence       # V8
-selection.diagnostics.onset_policy
-selection.diagnostics.bimanual_policy     # V8
+start_frame / end_frame
+left_action / right_action
+primary_action_verb
+sub_task
+guide_action
+num_chunks
 ```
 
-### 人工检查重点
+数值目标定义为：
 
-1. 红线是否落在 gripper/pause 稳定事件附近；
-2. 蓝色 `O` 是否比 phase label crossing 更早，并落在新趋势实际起点；
-3. 左右手 phase lane 不同时，V8 是否仍保留各自 primitive；
-4. sequential 双手事件是否被错误合并；
-5. 很短 joint segment 是否来自真实错峰，还是阈值过小；
-6. weak reference 只作参考，不应为了贴合绿线而改 state-only 规则。
+```text
+guide_action = action[end_frame] - observation.state[start_frame]
+num_chunks   = ceil((end_frame - start_frame + 1) / 8)
+```
 
----
+纯动作数据禁止出现 `cot`、`reasoning`、`chain_of_thought` 或
+`assistant_response`。
 
-## 10. 文档
+## 7. 批量生成 CoT 数据
 
-- 历史数学定义与 V1–V5：[`ITERATION_REPORT.md`](ITERATION_REPORT.md)
-- 本轮 V6–V8 设计、推理和使用说明：[`V6_V8_ITERATION_new.md`](V6_V8_ITERATION_new.md)
+### 7.1 本地结构验证
 
+`template` 模式用于测试格式、抽帧、数据对齐和可视化，不应被当作高质量模型标注：
+
+```bash
+python scripts/generate_cot_data.py \
+  --data-root /path/to/robotwin-endpose \
+  --manifest /path/to/success_episodes.json \
+  --output-dir artifacts/cot_data \
+  --reasoner template
+```
+
+### 7.2 OpenAI-compatible 多模态模型
+
+```bash
+python scripts/generate_cot_data.py \
+  --data-root /path/to/robotwin-endpose \
+  --manifest /path/to/success_manifest.json \
+  --output-dir artifacts/cot_data \
+  --reasoner openai-compatible \
+  --endpoint http://127.0.0.1:8007 \
+  --model Qwen/Qwen3.8-Flash-Next
+```
+
+如服务需要 API key，只设置环境变量，不要写入仓库：
+
+```bash
+export OPENAI_API_KEY='...'
+```
+
+主要输出：
+
+```text
+artifacts/cot_data/action_train.json
+artifacts/cot_data/cot_train.jsonl
+artifacts/cot_data/assets/
+artifacts/cot_data/manifest.json
+```
+
+每个 atomic segment 对应一条 CoT row：
+
+```text
+当前三相机图像
++ 可选的上一决策点三相机图像
++ 当前/历史 robot state
++ 已完成 action history
+→ <think>pre-action reasoning</think>
+→ {guide_action, primary_action_verb, sub_task, num_chunks}
+```
+
+最终 human turn 不包含当前 `guide_action` 或 `sub_task`；当前动作只出现在
+assistant 输出和审计用 `target` 元数据中。
+
+## 8. 单条 episode 生成 CoT
+
+```bash
+python scripts/generate_episode_cot.py \
+  --data-root /path/to/robotwin-endpose \
+  --episode 18 \
+  --output-dir artifacts/episode_18 \
+  --reasoner openai-compatible \
+  --endpoint http://127.0.0.1:8007 \
+  --model Qwen/Qwen3.8-Flash-Next
+```
+
+若 `meta/episodes.jsonl` 没有合适任务文本，可额外传入：
+
+```bash
+--task "Hold the Coca-Cola bottle upright after lifting with the right arm"
+```
+
+该入口和批量生成器共用完全相同的实现和数据合同。
+
+## 9. 两类可视化
+
+```bash
+python scripts/build_visualizations.py \
+  --data-root /path/to/robotwin-endpose \
+  --manifest /path/to/three_successful_episodes.json \
+  --output-dir artifacts/visualizations \
+  --zip-path artifacts/atomic_episode_visualizations.zip
+```
+
+`examples/success_episodes.example.json` 是 manifest 模板。请复制到本地、替换为
+经过人工确认的三条成功 episode；脚本要求恰好三条，随后为每条生成两类可视化：
+
+1. `artifacts/visualizations/segmentation/episode_XXXXXX.svg`
+   - 双臂能量；
+   - left/right boundary；
+   - joint coordination boundary；
+   - atomic segment table。
+2. `artifacts/visualizations/episodes/episode_XXXXXX.html`
+   - 三路完整视频；
+   - 每段三相机当前关键帧；
+   - action-only supervision；
+   - 对应的嵌入式 CoT。
+
+总入口：
+
+```text
+artifacts/visualizations/index.html
+```
+
+可直接下载或传输的完整包：
+
+```text
+artifacts/atomic_episode_visualizations.zip
+```
+
+ZIP 包含 3 个分割 SVG、3 个完整 episode HTML、逐段关键帧和 9 路完整相机视频。
+由于这些内容来自本地数据集，`artifacts/`、`visualization_archives/` 和媒体 ZIP
+均被 Git 忽略，不上传到代码仓库。
+
+## 10. 测试
+
+```bash
+python -m pytest -q
+```
+
+测试覆盖：
+
+- 时间归一化和 successor onset；
+- 双臂 boundary fusion；
+- success-only 拒绝规则；
+- action-only 无 CoT；
+- CoT target isolation；
+- 使用纯合成轨迹/图片/占位视频生成三个 SVG 和三个完整 episode HTML；
+- 合成 HTML 的所有本地引用存在，合成 ZIP 的 3 SVG、3 HTML、9 MP4 合同成立。
+
+## 11. 当前范围
+
+当前仓库只处理**完全正确的完整 episode**：
+
+- 不推断 failure cause；
+- 不处理 drift；
+- 不拼接 policy prefix 与 recovery rollout；
+- 不生成 recovery reasoning；
+- 不把历史 failure/recovery 代码留在生产路径。
+
+如未来重新开展 failure/recovery 项目，应建立独立仓库或独立 package，而不是再次
+混入这里的成功演示流水线。
