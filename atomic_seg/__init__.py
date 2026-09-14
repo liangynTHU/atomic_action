@@ -1,5 +1,6 @@
-"""Atomic episode segmentation research package."""
+"""Atomic episode segmentation and successful-demonstration data tooling."""
 
-from .pipeline import run_version
+from .config import SegmentationConfig
+from .segmentation import segment_episode
 
-__all__ = ["run_version"]
+__all__ = ["SegmentationConfig", "segment_episode"]

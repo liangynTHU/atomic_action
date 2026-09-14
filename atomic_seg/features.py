@@ -1,124 +1,57 @@
-"""Kinematic feature extraction for 16D dual-arm end-pose trajectories.
-
-The physical orientation belongs to SO(3). Unit quaternions in the input are
-only its numerical representation.
-"""
+"""NumPy-only kinematic features for 16-D dual-arm end-pose trajectories."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
 
-from .geometry import quaternion_angle, quaternion_log_delta
+from .geometry import quaternion_angle
 
 
 ARM_OFFSETS = {"left": 0, "right": 8}
 
 
-@dataclass(frozen=True)
-class FeatureConfig:
-    smooth_window: int = 5
-    translation_step_scale: float = 0.003
-    rotation_step_scale: float = 0.02
-    gripper_step_scale: float = 0.05
+def arm_components(
+    trajectory: np.ndarray,
+    arm: str,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return xyz, quaternion-wxyz and gripper streams for one arm."""
 
-
-def arm_components(trajectory: np.ndarray, arm: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if arm not in ARM_OFFSETS:
+        raise ValueError(f"unknown arm {arm!r}")
+    values = np.asarray(trajectory, dtype=np.float64)
+    if values.ndim != 2 or values.shape[1] != 16:
+        raise ValueError("trajectory must have shape [frames, 16]")
     offset = ARM_OFFSETS[arm]
     return (
-        trajectory[:, offset : offset + 3],
-        trajectory[:, offset + 3 : offset + 7],
-        trajectory[:, offset + 7],
+        values[:, offset : offset + 3],
+        values[:, offset + 3 : offset + 7],
+        values[:, offset + 7],
     )
 
 
 def moving_average(values: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1:
-        return np.asarray(values, dtype=np.float64).copy()
-    # ``np.convolve(..., mode="same")`` returns the larger of the signal and
-    # kernel lengths.  Clamp the kernel so truncated failure episodes still
-    # preserve their original frame count.
-    window = min(int(window), len(values))
-    if window <= 1:
-        return np.asarray(values, dtype=np.float64).copy()
-    kernel = np.ones(window, dtype=np.float64) / float(window)
-    return np.convolve(np.asarray(values, dtype=np.float64), kernel, mode="same")
+    """Smooth a one-dimensional stream without changing its length."""
 
-
-def per_arm_features(
-    trajectory: np.ndarray, arm: str, config: FeatureConfig
-) -> Dict[str, np.ndarray]:
-    position, quaternion, gripper = arm_components(trajectory, arm)
-    delta_position = np.diff(position, axis=0)
-    delta_rotation_vector = quaternion_log_delta(quaternion[:-1], quaternion[1:])
-    delta_rotation = np.linalg.norm(delta_rotation_vector, axis=1)
-    delta_gripper = np.diff(gripper)
-    translation_step = np.linalg.norm(delta_position, axis=1)
-    energy_step = (
-        translation_step / config.translation_step_scale
-        + delta_rotation / config.rotation_step_scale
-        + np.abs(delta_gripper) / config.gripper_step_scale
-    )
-    energy = np.r_[0.0, energy_step]
-    energy_smooth = moving_average(energy, config.smooth_window)
-    velocity_features = np.column_stack(
-        [
-            delta_position / config.translation_step_scale,
-            delta_rotation_vector / config.rotation_step_scale,
-            delta_gripper / config.gripper_step_scale,
-        ]
-    )
-    for column in range(velocity_features.shape[1]):
-        velocity_features[:, column] = moving_average(
-            velocity_features[:, column], config.smooth_window
-        )
-    return {
-        "position": position,
-        "quaternion": quaternion,
-        "gripper": gripper,
-        "delta_position": delta_position,
-        "delta_rotation": delta_rotation,
-        "delta_rotation_vector": delta_rotation_vector,
-        "delta_gripper": delta_gripper,
-        "translation_step": translation_step,
-        "energy": energy,
-        "energy_smooth": energy_smooth,
-        "velocity_features": velocity_features,
-    }
-
-
-def extract_features(
-    trajectory: np.ndarray, config: FeatureConfig | None = None
-) -> Dict[str, object]:
-    config = config or FeatureConfig()
-    arms = {
-        arm: per_arm_features(trajectory, arm, config)
-        for arm in ("left", "right")
-    }
-    total_energy = {
-        arm: float(np.sum(arms[arm]["energy_smooth"])) for arm in arms
-    }
-    active_arm = max(total_energy, key=total_energy.get)
-    dual_velocity = np.column_stack(
-        [arms["left"]["velocity_features"], arms["right"]["velocity_features"]]
-    )
-    return {
-        "config": config,
-        "arms": arms,
-        "active_arm": active_arm,
-        "total_energy": total_energy,
-        "dual_velocity_features": dual_velocity,
-    }
+    array = np.asarray(values, dtype=np.float64)
+    if array.ndim != 1:
+        raise ValueError("moving_average expects a one-dimensional array")
+    if len(array) == 0 or window <= 1:
+        return array.copy()
+    width = min(int(window), len(array))
+    if width <= 1:
+        return array.copy()
+    kernel = np.ones(width, dtype=np.float64) / float(width)
+    return np.convolve(array, kernel, mode="same")
 
 
 def normalize_direction(direction: np.ndarray) -> np.ndarray:
-    direction = np.asarray(direction, dtype=np.float64)
-    norm = float(np.linalg.norm(direction))
+    vector = np.asarray(direction, dtype=np.float64)
+    norm = float(np.linalg.norm(vector))
     if norm <= 1e-12:
-        raise ValueError("Direction vector must have non-zero norm.")
-    return direction / norm
+        raise ValueError("direction vector must have non-zero norm")
+    return vector / norm
 
 
 def local_motion_statistics(
@@ -128,13 +61,7 @@ def local_motion_statistics(
     window: int,
     vertical_direction: np.ndarray,
 ) -> Dict[str, float | list]:
-    """Compute windowed motion statistics around one frame.
-
-    The window captures net displacement, path length, vertical/horizontal
-    decomposition, accumulated rotation, and gripper trend. These statistics
-    are used for phase classification; no single-frame derivative determines a
-    phase label.
-    """
+    """Compute windowed displacement, path, rotation and gripper statistics."""
 
     half = max(1, int(window) // 2)
     start = max(0, int(frame) - half)
@@ -149,7 +76,8 @@ def local_motion_statistics(
     path_length = float(
         np.sum(
             np.linalg.norm(
-                np.diff(position[start : end + 1], axis=0), axis=1
+                np.diff(position[start : end + 1], axis=0),
+                axis=1,
             )
         )
     )
@@ -161,7 +89,6 @@ def local_motion_statistics(
             )
         )
     )
-    gripper_trend = float(gripper[end] - gripper[start])
     return {
         "start_frame": start,
         "end_frame": end,
@@ -175,16 +102,16 @@ def local_motion_statistics(
         "horizontal_ratio": horizontal_displacement
         / max(translation_norm, 1e-12),
         "accumulated_rotation": accumulated_rotation,
-        "gripper_trend": gripper_trend,
+        "gripper_trend": float(gripper[end] - gripper[start]),
     }
 
 
 def contiguous_runs(mask: np.ndarray) -> List[Tuple[int, int]]:
-    mask = np.asarray(mask, dtype=bool)
+    values = np.asarray(mask, dtype=bool)
     runs: List[Tuple[int, int]] = []
     start = None
-    for index in range(len(mask) + 1):
-        active = index < len(mask) and bool(mask[index])
+    for index in range(len(values) + 1):
+        active = index < len(values) and bool(values[index])
         if active and start is None:
             start = index
         if not active and start is not None:
@@ -193,38 +120,52 @@ def contiguous_runs(mask: np.ndarray) -> List[Tuple[int, int]]:
     return runs
 
 
-def gripper_events(gripper: np.ndarray, threshold: float = 0.01) -> List[Dict[str, object]]:
-    changes = np.diff(np.asarray(gripper, dtype=np.float64))
+def gripper_events(
+    gripper: np.ndarray,
+    threshold: float = 0.01,
+) -> List[Dict[str, object]]:
+    """Return contiguous gripper changes in state-frame coordinates."""
+
+    values = np.asarray(gripper, dtype=np.float64)
+    changes = np.diff(values)
     moving = np.abs(changes) >= threshold
     events: List[Dict[str, object]] = []
     for start, end in contiguous_runs(moving):
-        # changes[start:end+1] maps state frame start -> end+1.
         state_start = start
         state_end = end + 1
-        delta = float(gripper[state_end] - gripper[state_start])
+        delta = float(values[state_end] - values[state_start])
         events.append(
             {
                 "start_frame": int(state_start),
                 "end_frame": int(state_end),
                 "delta": delta,
-                "kind": "close_gripper" if delta < 0.0 else "open_gripper",
+                "direction": "decrease" if delta < 0.0 else "increase",
             }
         )
     return events
 
 
 def segment_motion_summary(
-    trajectory: np.ndarray, start: int, end: int, arm: str
+    trajectory: np.ndarray,
+    start: int,
+    end: int,
+    arm: str,
 ) -> Dict[str, float | list]:
     position, quaternion, gripper = arm_components(trajectory, arm)
     displacement = position[end] - position[start]
     path_length = float(
-        np.sum(np.linalg.norm(np.diff(position[start : end + 1], axis=0), axis=1))
+        np.sum(
+            np.linalg.norm(
+                np.diff(position[start : end + 1], axis=0),
+                axis=1,
+            )
+        )
     )
     rotation = float(
         np.sum(
             quaternion_angle(
-                quaternion[start + 1 : end + 1], quaternion[start:end]
+                quaternion[start + 1 : end + 1],
+                quaternion[start:end],
             )
         )
     )
