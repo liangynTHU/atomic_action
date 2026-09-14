@@ -8,9 +8,14 @@ __pycache__/
 .venv/
 venv/
 env/
+.runtime/
 
+runs/
 outputs/
-outputs_bimanual_examples/
+artifacts/
+visualization_archives/
+examples/visualizations/
+examples/atomic_episode_visualizations.zip
 
 build/
 dist/
