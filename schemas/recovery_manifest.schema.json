@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recovery_manifest.schema.json",
+  "title": "Recovery CoT manifest",
+  "type": "object",
+  "required": ["schema", "episodes"],
+  "properties": {
+    "schema": {"const": "recovery_cot_manifest"},
+    "episodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "adapter",
+          "data_root",
+          "episode_index"
+        ],
+        "properties": {
+          "adapter": {"enum": ["direct", "native_recovery_pair"]},
+          "data_root": {"type": "string", "minLength": 1},
+          "episode_index": {"type": "integer", "minimum": 0},
+          "recovery_episode_json": {"type": "string", "minLength": 1},
+          "scenario_json": {"type": "string", "minLength": 1},
+          "failed_subtask": {"type": "string"},
+          "failure_outcome_status": {
+            "enum": [
+              "failed_no_effect",
+              "failed_different",
+              "partial",
+              "unknown"
+            ]
+          },
+          "segments": {"type": "array"}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "adapter": {"const": "native_recovery_pair"}
+              }
+            },
+            "then": {
+              "required": [
+                "recovery_episode_json",
+                "scenario_json",
+                "failed_subtask",
+                "failure_outcome_status",
+                "segment_overrides"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {"adapter": {"const": "direct"}}
+            },
+            "then": {
+              "required": [
+                "recovery_level",
+                "failure_type",
+                "source_failure_verified",
+                "recovery_success",
+                "training_eligible",
+                "segments"
+              ]
+            }
+          }
+        ],
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

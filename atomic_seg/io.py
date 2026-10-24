@@ -10,7 +10,6 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 import numpy as np
 import pyarrow.parquet as pq
 
-
 CAMERA_KEYS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 
 
@@ -28,9 +27,7 @@ class SuccessEpisode:
         if self.episode_index < 0:
             raise ValueError("episode_index must be non-negative")
         if self.success is not True:
-            raise ValueError(
-                "this repository only accepts fully correct episodes"
-            )
+            raise ValueError("this repository only accepts fully correct episodes")
 
 
 def _jsonable(value: Any) -> Any:
@@ -75,9 +72,7 @@ def read_jsonl(path: Path | str) -> Iterator[dict[str, Any]]:
                 continue
             value = json.loads(line)
             if not isinstance(value, dict):
-                raise ValueError(
-                    f"{path}:{line_number}: expected a JSON object"
-                )
+                raise ValueError(f"{path}:{line_number}: expected a JSON object")
             yield value
 
 
@@ -113,11 +108,7 @@ def validate_end_pose_dataset(root: Path | str) -> Path:
 
     data_root = Path(root)
     info = dataset_info(data_root)
-    shape = (
-        info.get("features", {})
-        .get("observation.state", {})
-        .get("shape")
-    )
+    shape = info.get("features", {}).get("observation.state", {}).get("shape")
     if list(shape or []) != [16]:
         raise ValueError(
             f"{data_root} stores observation.state shape {shape}; "
@@ -146,9 +137,7 @@ def video_path(
     camera_key: str,
 ) -> Path:
     if camera_key not in CAMERA_KEYS:
-        raise ValueError(
-            f"camera_key must be one of {CAMERA_KEYS}, got {camera_key!r}"
-        )
+        raise ValueError(f"camera_key must be one of {CAMERA_KEYS}, got {camera_key!r}")
     episode = int(episode_index)
     relative = (
         Path(f"chunk-{episode // 1000:03d}")
@@ -195,9 +184,7 @@ def load_episode_tasks(root: Path | str) -> dict[int, str]:
     tasks: dict[int, str] = {}
     for record in read_jsonl(path):
         choices = record.get("tasks") or []
-        tasks[int(record["episode_index"])] = (
-            str(choices[0]) if choices else ""
-        )
+        tasks[int(record["episode_index"])] = str(choices[0]) if choices else ""
     return tasks
 
 
@@ -224,14 +211,10 @@ def load_success_manifest(path: Path | str) -> list[SuccessEpisode]:
                 if item.get("source_episode_id")
                 else None
             ),
-            success_provenance=str(
-                item.get("success_provenance", "")
-            ).strip(),
+            success_provenance=str(item.get("success_provenance", "")).strip(),
         )
         if episode.episode_index in seen:
-            raise ValueError(
-                f"duplicate episode_index {episode.episode_index}"
-            )
+            raise ValueError(f"duplicate episode_index {episode.episode_index}")
         seen.add(episode.episode_index)
         episodes.append(episode)
     if not episodes:
@@ -248,17 +231,14 @@ def resolve_episode_tasks(
     for episode in episodes:
         task = episode.task or tasks.get(episode.episode_index, "")
         if not task:
-            raise ValueError(
-                f"episode {episode.episode_index} has no task instruction"
-            )
+            raise ValueError(f"episode {episode.episode_index} has no task instruction")
         output.append(
             SuccessEpisode(
                 episode_index=episode.episode_index,
                 task=task,
                 success=True,
                 source_episode_id=(
-                    episode.source_episode_id
-                    or f"episode_{episode.episode_index:06d}"
+                    episode.source_episode_id or f"episode_{episode.episode_index:06d}"
                 ),
                 success_provenance=episode.success_provenance,
             )

@@ -56,8 +56,4 @@ def quaternion_log_delta(
         norm,
         np.clip(relative[..., 0], -1.0, 1.0),
     )
-    return (
-        vector
-        / np.maximum(norm[..., None], 1e-12)
-        * angle[..., None]
-    )
+    return vector / np.maximum(norm[..., None], 1e-12) * angle[..., None]

@@ -24,6 +24,7 @@ class SegmentationConfig:
     exchange_search_seconds: float = 1.50
     gripper_pre_window_seconds: float = 0.60
     gripper_post_window_seconds: float = 0.40
+    terminal_still_min_seconds: float = 0.16
 
     translation_speed_scale: float = 0.15
     rotation_speed_scale: float = 1.00

@@ -1,0 +1,70 @@
+{
+  "pipeline": "pretrain_noncot",
+  "output_root": "../artifacts/pretrain_noncot_20261012_robotwin_aligned",
+  "endpoint_file": "../.runtime/pretrain_endpoints_min16_pref32.txt",
+  "model": "Qwen/Qwen3.8-Flash-Next",
+  "workers": 8,
+  "batch_size": 4,
+  "datasets": [
+    {
+      "adapter": "oxe_bridge",
+      "root": "/apdcephfs_gy5/share_303588738/peterrao/data/vla-data/OXE",
+      "episodes": [
+        {
+          "id": "oxe_bridge_00",
+          "shard": "bridge-train.tfrecord-00000-of-00256",
+          "record_index": 0,
+          "nominal_fps": 5
+        },
+        {
+          "id": "oxe_bridge_01",
+          "shard": "bridge-train.tfrecord-00000-of-00256",
+          "record_index": 1,
+          "nominal_fps": 5
+        },
+        {
+          "id": "oxe_bridge_02",
+          "shard": "bridge-train.tfrecord-00000-of-00256",
+          "record_index": 2,
+          "nominal_fps": 5
+        },
+        {
+          "id": "oxe_bridge_03",
+          "shard": "bridge-train.tfrecord-00000-of-00256",
+          "record_index": 3,
+          "nominal_fps": 5
+        }
+      ]
+    },
+    {
+      "adapter": "abc_yam",
+      "root": "/apdcephfs_gy2/share_303214312/leoyizhang/datasets/ABC-130k",
+      "episodes": [
+        {
+          "id": "abc_tower",
+          "episode": "data/train/build_the_wood_block_tower/episode_3be4f09b-685a-4c59-8af8-8d51ab184e7e"
+        },
+        {
+          "id": "abc_towel",
+          "episode": "data/train/fold_and_stack_the_towels/episode_7d701932-dce7-42b0-a902-ab0b091b5292"
+        },
+        {
+          "id": "abc_whiteboard",
+          "episode": "data/val/erase_the_whiteboard/episode_8a996a4f-c539-4cfa-8e82-dc1c9020d110"
+        },
+        {
+          "id": "abc_cups",
+          "episode": "data/val/load_the_cups_into_the_dish_rack/episode_8c7f1c2f-119e-4786-85ae-10c7e72a5151"
+        }
+      ],
+      "length_policy": {
+        "minimum_frames": 16,
+        "preferred_minimum_frames": 32,
+        "preferred_maximum_frames": 64,
+        "maximum_merged_frames": 128
+      }
+    }
+  ],
+  "reuse_prepared_root": "../artifacts/pretrain_noncot_20261012_min16_pref32",
+  "reuse_annotations_root": "../artifacts/pretrain_noncot_20261012_min16_pref32"
+}

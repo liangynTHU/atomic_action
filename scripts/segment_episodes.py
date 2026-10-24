@@ -3,16 +3,13 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import argparse
+
 import numpy as np
-
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from atomic_seg import SegmentationConfig, segment_episode
 from atomic_seg.io import (
@@ -77,9 +74,7 @@ def main() -> None:
             "success": True,
             "success_provenance": episode.success_provenance,
         }
-        output_path = (
-            args.output_dir / f"episode_{episode.episode_index:06d}.json"
-        )
+        output_path = args.output_dir / f"episode_{episode.episode_index:06d}.json"
         save_json(output_path, payload)
         manifest["episodes"].append(
             {

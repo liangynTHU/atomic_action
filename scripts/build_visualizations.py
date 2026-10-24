@@ -3,14 +3,11 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import argparse
 
 from atomic_seg.generation import TemplateReasoner, generate_cot_dataset
 from atomic_seg.io import (
@@ -54,9 +51,7 @@ def main() -> None:
     root = validate_end_pose_dataset(args.data_root)
     episodes = resolve_episode_tasks(root, load_success_manifest(args.manifest))
     if len(episodes) != 3:
-        raise ValueError(
-            "the visualization bundle must contain exactly 3 episodes"
-        )
+        raise ValueError("the visualization bundle must contain exactly 3 episodes")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     reasoner = TemplateReasoner()
     action_dataset, cot_rows = generate_cot_dataset(
@@ -74,8 +69,7 @@ def main() -> None:
         for episode in episodes
     }
     action_by_episode = {
-        int(record["episode_index"]): record
-        for record in action_dataset["episodes"]
+        int(record["episode_index"]): record for record in action_dataset["episodes"]
     }
     entries = []
     for episode in episodes:
@@ -122,8 +116,7 @@ def main() -> None:
     )
     package = package_visualizations(args.output_dir, zip_path)
     print(
-        f"zip={package['path']} files={package['file_count']} "
-        f"bytes={package['bytes']}"
+        f"zip={package['path']} files={package['file_count']} bytes={package['bytes']}"
     )
 
 

@@ -1,0 +1,10 @@
+{
+  "pipeline": "cot_data",
+  "input_root": "/path/to/aligned-normal-dataset",
+  "output_root": "/path/to/new-normal-cot-release",
+  "annotations": "/path/to/observer-dual-critic-accepted-annotations.jsonl",
+  "expected_rows": 326702,
+  "expected_episodes": 27487,
+  "expected_corrections": 61,
+  "require_no_short_same_action": true
+}

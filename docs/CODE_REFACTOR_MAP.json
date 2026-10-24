@@ -1,0 +1,59 @@
+{
+  "modules": {
+    "robotwin_v28_cot5_generation": "cot_data.generation",
+    "robotwin_v28_action_manifest": "cot_data.action_manifest",
+    "robotwin_v28_semantic_cleanup": "cot_data.semantic_cleanup",
+    "robotwin_v28_still_cleanup": "cot_data.still_cleanup",
+    "v28_prompt_contract": "prompt_contract",
+    "recovery_v28_production": "recovery_cot.production",
+    "recovery_v28_refinement": "recovery_cot.refinement",
+    "cot_style_generation": "recovery_cot.styles",
+    "recovery_generation": "recovery_cot.generation",
+    "recovery_io": "recovery_cot.io",
+    "recovery_segmentation": "recovery_cot.segmentation",
+    "full_episode_recovery_cot": "recovery_cot.full_episode",
+    "wjh_data.cot_data.prompts_pilot_v2": "cot_data.prompts",
+    "wjh_data.cot_data.visual_grounding_contract": "cot_data.evidence"
+  },
+  "scripts": {
+    "generate_robotwin_v28_cot5.py": "generate_cot_dataset.py",
+    "build_robotwin_v28_action_manifest.py": "build_action_segmentation.py",
+    "audit_robotwin_v28_final_release.py": "audit_cot_release.py",
+    "audit_robotwin_v29_cot_quality.py": "audit_cot_quality.py",
+    "audit_robotwin_v28_extended_quality.py": "audit_cot_trajectories.py",
+    "install_robotwin_v28_final_release.py": "install_cot_release.py",
+    "robotwin_recovery_v28_full.py": "recovery_cot.py",
+    "refine_robotwin_recovery_v28_still.py": "refine_recovery_still.py",
+    "refine_robotwin_v28_still.py": "refine_cot_still.py",
+    "clean_robotwin_v28_action_language.py": "clean_cot_actions.py",
+    "merge_robotwin_v28_short_same_action.py": "merge_short_actions.py",
+    "remap_robotwin_v29_action_corrections.py": "remap_action_corrections.py",
+    "build_robotwin_v29_metadata_report.py": "build_cot_metadata.py",
+    "launch_robotwin_recovery_v28_full_8nodes.sh": "run_pipeline.py",
+    "monitor_robotwin_recovery_v28_hourly.sh": "recovery_cot.py"
+  },
+  "retired_scripts": [
+    "scripts/launch_robotwin_recovery_v28_full_8nodes.sh",
+    "scripts/monitor_robotwin_recovery_v28_hourly.sh",
+    "scripts/start_allocated_qwen38_tp8_pool.sh",
+    "scripts/launch_robotwin_v28_cot5_128gpu_rank.sh",
+    "scripts/merge_robotwin_v28_cot5_distributed.py",
+    "scripts/run_robotwin_v28_cot5_distributed_rank.sh",
+    "scripts/run_robotwin_v28_final_pipeline.sh",
+    "scripts/run_robotwin_v29_final_pipeline.sh",
+    "scripts/watch_robotwin_v28_final_pipeline.sh",
+    "scripts/watch_robotwin_v29_final_pipeline.sh",
+    "scripts/prepare_cot_rewrite.py",
+    "scripts/generate_selected_cot.py",
+    "scripts/compose_cot_annotations.py",
+    "scripts/repair_cot_annotations.py",
+    "scripts/build_evidence_merge_review.py",
+    "scripts/build_evidence_merge_v2_review.py",
+    "scripts/check_evidence_merge_review.py"
+  ],
+  "retired_modules": [
+    "atomic_seg/wjh_data/cot_data",
+    "atomic_seg/pretrain/evidence_merge.py",
+    "atomic_seg/pretrain/evidence_merge_v2.py"
+  ]
+}

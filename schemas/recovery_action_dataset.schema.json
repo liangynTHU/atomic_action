@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recovery_action_dataset.schema.json",
+  "title": "Atomic recovery action dataset",
+  "type": "object",
+  "required": [
+    "schema",
+    "data_kind",
+    "episode_count",
+    "segment_count",
+    "episodes"
+  ],
+  "properties": {
+    "schema": {"const": "atomic_recovery_action_dataset"},
+    "data_kind": {"const": "recovery"},
+    "episode_count": {"type": "integer", "minimum": 1},
+    "segment_count": {"type": "integer", "minimum": 1},
+    "episodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "schema",
+          "data_kind",
+          "episode_id",
+          "episode_index",
+          "task",
+          "recovery_level",
+          "failure_type",
+          "source_failure_verified",
+          "recovery_success",
+          "training_eligible",
+          "state_layout",
+          "segmentation",
+          "segments"
+        ],
+        "properties": {
+          "schema": {"const": "atomic_recovery_action_episode"},
+          "data_kind": {"const": "recovery"},
+          "episode_id": {"type": "string", "minLength": 1},
+          "episode_index": {"type": "integer", "minimum": 0},
+          "task": {"type": "string", "minLength": 1},
+          "recovery_level": {"type": "integer", "minimum": 1, "maximum": 4},
+          "failure_type": {"type": "string", "minLength": 1},
+          "source_failure_verified": {"const": true},
+          "recovery_success": {"const": true},
+          "training_eligible": {"const": true},
+          "state_layout": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "segmentation": {
+            "type": "object",
+            "required": [
+              "method",
+              "automatic_state_segmentation_is_authoritative"
+            ],
+            "properties": {
+              "method": {"const": "annotated_recovery_decision_segments"},
+              "automatic_state_segmentation_is_authoritative": {"const": false}
+            }
+          },
+          "segments": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "segment_index",
+                "start_frame",
+                "end_frame",
+                "boundary_source",
+                "primary_action_verb",
+                "sub_task",
+                "guide_action",
+                "num_chunks",
+                "recovery_role",
+                "previous_outcome"
+              ]
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,13 @@
+{
+  "pipeline": "recovery_cot_data",
+  "source_root": "/path/to/native-recovery-dataset",
+  "output_root": "/path/to/new-recovery-cot-release",
+  "reference_driver": "/mnt/lyn/workspace/FastWAM/tools/robotwin_cot_v28_full.py",
+  "endpoint_file": "/path/to/endpoints.txt",
+  "expected_endpoints": 8,
+  "model": "Qwen/Qwen3.8-Flash-Next",
+  "world_size": 8,
+  "prepare_workers": 4,
+  "generation_workers": 16,
+  "max_rank_attempts": 3
+}

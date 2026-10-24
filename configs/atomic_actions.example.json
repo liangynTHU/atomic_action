@@ -1,0 +1,6 @@
+{
+  "pipeline": "atomic_actions",
+  "data_root": "/path/to/endpose-dataset",
+  "manifest": "/path/to/success_episodes.json",
+  "output_root": "/path/to/new-atomic-output"
+}

@@ -22,6 +22,7 @@ from .features import (
     segment_motion_summary,
 )
 from .geometry import quaternion_log_delta
+from .still_policy import plan_still_segment_groups
 
 
 ARM_NAMES = ("left", "right")
@@ -86,6 +87,7 @@ class TemporalParameters:
     gripper_pre_window_frames: int
     gripper_post_window_frames: int
     energy_smooth_frames: int
+    terminal_still_min_frames: int
 
 
 def segments_from_boundaries(
@@ -235,6 +237,10 @@ def resolve_temporal_parameters(
         ),
         energy_smooth_frames=_seconds_to_frames(
             0.10,
+            sample_period,
+        ),
+        terminal_still_min_frames=_seconds_to_frames(
+            config.terminal_still_min_seconds,
             sample_period,
         ),
     )
@@ -1292,6 +1298,58 @@ def _attach_coordination_context(
     return output
 
 
+def _apply_both_still_policy(
+    trajectory: np.ndarray,
+    segments: Sequence[Mapping[str, object]],
+    *,
+    minimum_terminal_still_frames: int,
+) -> tuple[List[Dict[str, object]], Dict[str, object]]:
+    """Absorb nonterminal both-still intervals into useful action targets."""
+
+    groups = plan_still_segment_groups(
+        segments,
+        minimum_terminal_still_frames=minimum_terminal_still_frames,
+    )
+    refined: List[Dict[str, object]] = []
+    for segment_index, group in enumerate(groups):
+        owner = dict(segments[group.owner_index])
+        owner.update(
+            {
+                "segment_index": segment_index,
+                "start_frame": group.start_frame,
+                "end_frame": group.end_frame,
+                "frame_count": group.end_frame - group.start_frame + 1,
+                "kinematics": {
+                    arm: segment_motion_summary(
+                        trajectory,
+                        group.start_frame,
+                        group.end_frame,
+                        arm,
+                    )
+                    for arm in ARM_NAMES
+                },
+                "source_segment_indices": list(group.source_indices),
+                "absorbed_still_segment_indices": list(
+                    group.absorbed_still_indices
+                ),
+                "absorbed_still_roles": list(group.absorbed_still_roles),
+            }
+        )
+        refined.append(owner)
+    absorbed = sum(len(group.absorbed_still_indices) for group in groups)
+    return refined, {
+        "policy": (
+            "initial both-still is next-action pre-context; middle both-still "
+            "is previous-action settling; only one sufficiently long terminal "
+            "both-still stage may remain"
+        ),
+        "minimum_terminal_still_frames": minimum_terminal_still_frames,
+        "input_segment_count": len(segments),
+        "output_segment_count": len(refined),
+        "absorbed_still_segment_count": absorbed,
+    }
+
+
 def _event_relations(
     diagnostics: Mapping[str, object],
     temporal: TemporalParameters,
@@ -1451,6 +1509,22 @@ def segment_episode(
         selected_config,
     )
     segments = _attach_coordination_context(segments, arm_timelines)
+    raw_boundaries = list(boundaries)
+    raw_segments = [dict(segment) for segment in segments]
+    segments, still_refinement = _apply_both_still_policy(
+        values,
+        segments,
+        minimum_terminal_still_frames=(
+            temporal.terminal_still_min_frames
+        ),
+    )
+    boundaries = boundaries_from_segments(segments)
+    retained_boundary_frames = set(boundaries)
+    coordination = [
+        item
+        for item in coordination
+        if int(item["frame"]) in retained_boundary_frames
+    ]
     return {
         "schema": "atomic_episode_segmentation",
         "method": "factorized_bimanual_state_segmentation",
@@ -1459,6 +1533,7 @@ def segment_episode(
         "decision_input_policy": dict(STATE_ONLY_DECISION_POLICY),
         "temporal_parameters": asdict(temporal),
         "boundaries": boundaries,
+        "raw_boundaries": raw_boundaries,
         "boundary_evidence": coordination,
         "per_arm_boundaries": {
             arm: [int(item["frame"]) for item in evidence]
@@ -1467,6 +1542,8 @@ def segment_episode(
         "per_arm_boundary_evidence": per_arm_evidence,
         "arm_timelines": arm_timelines,
         "segments": segments,
+        "raw_segments": raw_segments,
+        "still_refinement": still_refinement,
         "diagnostics": {
             **diagnostics,
             "onset_policy": (

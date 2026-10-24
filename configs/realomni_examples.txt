@@ -1,0 +1,18 @@
+Clutter-Tidy-Up-[Stage2]/00001/01710.mcap
+Clutter-Tidy-Up-[Stage2]/00002/00122.mcap
+Clutter-Tidy-Up-[Stage2]/00003/00459.mcap
+Cooking_and_Kitchen_Clean/clean_bowl/00001/00004.mcap
+Cooking_and_Kitchen_Clean/clean_container/00001/00378.mcap
+Cooking_and_Kitchen_Clean/unscrew_bottle_cap_and_pour/00001/00138.mcap
+Folding_Clothes_and_Zipper_Operations/fold_and_store_clothes/00001/00008.mcap
+Folding_Clothes_and_Zipper_Operations/fold_and_store_clothes/00002/00928.mcap
+Folding_Clothes_and_Zipper_Operations/fold_and_store_clothes/00003/01508.mcap
+Organize_Clutter/desktop_object_sorting/00001/00001.mcap
+Organize_Clutter/desktop_object_sorting/00002/01563.mcap
+Organize_Clutter/desktop_object_sorting/00003/01457.mcap
+Shoes_Handling/lace_up_shoes_with_both_hands/00001/00006.mcap
+Shoes_Handling/lace_up_shoes_with_both_hands/00001/00105.mcap
+Shoes_Handling/organize_scattered_shoes/00001/00055.mcap
+[STAGE 3]/domestic_services/bedroom/clothing_organization/fold_and_store_clothes/0001/0668fc3fecf0489fa7d4f72bee5d8b41.mcap
+[STAGE 3]/domestic_services/bedroom/clothing_organization/fold_and_store_large_clothes/0001/916cc4eae99f4e5ba8db45464d0ef2d5.mcap
+[STAGE 3]/domestic_services/bedroom/clothing_organization/fold_and_store_large_clothes/0002/089bc1f1de364d14a148e644ec2426fb.mcap

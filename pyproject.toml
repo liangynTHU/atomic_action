@@ -5,14 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "atomic-episode-segmentation"
 version = "1.0.0"
-description = "State-only atomic segmentation and successful-episode CoT data generation"
+description = "Atomic segmentation plus isolated success and recovery CoT pipelines"
 requires-python = ">=3.10"
 dependencies = [
+  "h5py>=3.10",
   "numpy>=1.26",
   "pyarrow>=14",
   "Pillow>=10",
   "av>=12,<16",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.16"]
+pretrain = ["mcap>=1.3", "mcap-protobuf-support>=0.5", "tfrecord>=1.14", "crc32c>=2.7", "scipy>=1.11"]
 
 [tool.setuptools.packages.find]
 include = ["atomic_seg*"]

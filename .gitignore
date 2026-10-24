@@ -23,3 +23,10 @@ dist/
 
 .DS_Store
 *.log
+.api_token
+.codebuddy_api_token
+.debug_GPU
+
+/tt-switch-cli/
+/tmp/
+/tests/

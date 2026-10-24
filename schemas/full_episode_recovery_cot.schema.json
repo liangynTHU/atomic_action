@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "full_episode_recovery_cot.schema.json",
+  "title": "Full-episode recovery CoT row",
+  "type": "object",
+  "required": [
+    "schema",
+    "sample_id",
+    "episode_id",
+    "row_index",
+    "sample_type",
+    "previous_subtask",
+    "previous_subtask_outcome",
+    "current_status",
+    "current_phase",
+    "raw_phase",
+    "phase_source",
+    "action_supervision",
+    "loss_scope",
+    "images",
+    "model_judgment",
+    "next_action_target",
+    "messages"
+  ],
+  "properties": {
+    "schema": {"const": "full_episode_recovery_cot_row"},
+    "previous_subtask_outcome": {
+      "enum": [
+        "success",
+        "partial",
+        "failed_no_effect",
+        "failed_different"
+      ]
+    },
+    "current_status": {
+      "enum": [
+        "rollout",
+        "pre_failure",
+        "attempt",
+        "failure",
+        "post_failure",
+        "failure_observation",
+        "failure_outcome",
+        "recovery",
+        "recovery_outcome"
+      ]
+    },
+    "current_phase": {"enum": ["rollout", "failure", "recovery"]},
+    "raw_phase": {
+      "enum": [
+        "rollout",
+        "pre_failure",
+        "attempt",
+        "failure_observation",
+        "failure_outcome",
+        "failure",
+        "post_failure",
+        "recovery",
+        "recovery_outcome"
+      ]
+    },
+    "phase_source": {"const": "dataset_phase_column"},
+    "action_supervision": {"type": "boolean"},
+    "images": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 9,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "model_judgment": {
+      "type": "object",
+      "required": [
+        "previous_subtask_outcome",
+        "observed_result",
+        "failure_analysis",
+        "confidence",
+        "evidence"
+      ]
+    },
+    "next_action_target": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": [
+            "guide_action",
+            "primary_action_verb",
+            "sub_task",
+            "num_chunks",
+            "recovery_role"
+          ]
+        }
+      ]
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3
+    }
+  },
+  "additionalProperties": true
+}

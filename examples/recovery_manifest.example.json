@@ -1,0 +1,37 @@
+{
+  "schema": "recovery_cot_manifest",
+  "episodes": [
+    {
+      "adapter": "native_recovery_pair",
+      "data_root": "/path/to/failure_then_recovery_lerobot",
+      "episode_index": 0,
+      "recovery_start_frame": null,
+      "recovery_episode_json": "/path/to/recovery_rollout/episode.json",
+      "scenario_json": "/path/to/scenario.json",
+      "require_audited": true,
+      "allow_label_derived_targets": false,
+      "transition_outcome_policy": "require_explicit",
+      "failed_subtask": "Press the target button with the right gripper.",
+      "failed_primary_action_verb": "right:press",
+      "failure_outcome_status": "failed_different",
+      "failure_mismatch": "The gripper pressed beside the target, so the button did not activate.",
+      "segment_overrides": {
+        "0": {
+          "sub_task": "Withdraw the right gripper from the failed press location.",
+          "primary_action_verb": "right:withdraw",
+          "recovery_role": "repair_precondition"
+        }
+      },
+      "transition_outcomes": {
+        "1": {
+          "status": "success",
+          "expected_subtask": "Withdraw the right gripper from the failed press location.",
+          "observed_outcome": "The gripper cleared the failed contact area.",
+          "annotation_source": "human_or_collector_audit",
+          "history_frame": 81,
+          "outcome_frame": 96
+        }
+      }
+    }
+  ]
+}

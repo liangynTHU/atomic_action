@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import math
-import mimetypes
 import re
-import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 import numpy as np
 
-from .config import SegmentationConfig
-from .io import (
+from atomic_seg.action_language import canonical_sub_task, cot_final_action_sentence
+from atomic_seg.common.model_client import (
+    _response_parts,
+    multimodal_content,
+    post_chat,
+)
+from atomic_seg.common.numeric import round_vector as _round_vector
+from atomic_seg.config import SegmentationConfig
+from atomic_seg.io import (
     CAMERA_KEYS,
     SuccessEpisode,
     load_episode,
     resolve_episode_tasks,
     video_path,
 )
-from .media import materialize_camera_frames
-from .segmentation import segment_episode, serializable_segmentation
-
+from atomic_seg.media import materialize_camera_frames
+from atomic_seg.segmentation import segment_episode, serializable_segmentation
 
 ACTION_DATASET_SCHEMA = "atomic_action_dataset"
 ACTION_EPISODE_SCHEMA = "atomic_action_episode"
@@ -39,54 +42,20 @@ FORBIDDEN_COT_KEYS = {
 }
 
 
-def _round_vector(value: Sequence[Any]) -> list[float]:
-    output: list[float] = []
-    for item in value:
-        number = round(float(item), 4)
-        output.append(0.0 if number == 0.0 else number)
-    return output
-
-
 def semantic_action(
     action: str,
     *,
     gripper_decrease_means_close: bool,
 ) -> str:
     if action == "gripper_decrease":
-        return (
-            "close_gripper"
-            if gripper_decrease_means_close
-            else "open_gripper"
-        )
+        return "close_gripper" if gripper_decrease_means_close else "open_gripper"
     if action == "gripper_increase":
-        return (
-            "open_gripper"
-            if gripper_decrease_means_close
-            else "close_gripper"
-        )
+        return "open_gripper" if gripper_decrease_means_close else "close_gripper"
     return action
 
 
 def primary_action_verb(left_action: str, right_action: str) -> str:
     return f"left:{left_action}, right:{right_action}"
-
-
-def _arm_clause(arm: str, action: str) -> str:
-    if action == "still":
-        return f"keep the {arm} arm still"
-    if action == "move":
-        return f"move the {arm} arm"
-    if action == "turn":
-        return f"turn the {arm} end effector"
-    if action == "lift":
-        return f"lift the {arm} arm"
-    if action == "lower":
-        return f"lower the {arm} arm"
-    if action == "close_gripper":
-        return f"close the {arm} gripper"
-    if action == "open_gripper":
-        return f"open the {arm} gripper"
-    raise ValueError(f"unsupported action {action!r}")
 
 
 def action_description(
@@ -96,24 +65,8 @@ def action_description(
 ) -> str:
     """Build a conservative, action-only sub-task description."""
 
-    if left_action == right_action == "still":
-        command = "keep both arms still"
-    elif left_action == "still":
-        command = (
-            f"{_arm_clause('right', right_action)} while keeping "
-            "the left arm still"
-        )
-    elif right_action == "still":
-        command = (
-            f"{_arm_clause('left', left_action)} while keeping "
-            "the right arm still"
-        )
-    else:
-        command = (
-            f"{_arm_clause('left', left_action)} and "
-            f"{_arm_clause('right', right_action)}"
-        )
-    return f"To continue the task '{task}', {command}."
+    del task
+    return canonical_sub_task(left_action, right_action)
 
 
 def _named_state(value: Sequence[Any]) -> dict[str, Any]:
@@ -147,15 +100,11 @@ def _action_target(
         raise ValueError(f"segment endpoint {end} has no action row")
     left = semantic_action(
         str(segment["left_action"]),
-        gripper_decrease_means_close=(
-            config.gripper_decrease_means_close
-        ),
+        gripper_decrease_means_close=(config.gripper_decrease_means_close),
     )
     right = semantic_action(
         str(segment["right_action"]),
-        gripper_decrease_means_close=(
-            config.gripper_decrease_means_close
-        ),
+        gripper_decrease_means_close=(config.gripper_decrease_means_close),
     )
     return {
         "primary_action_verb": primary_action_verb(left, right),
@@ -180,9 +129,7 @@ def build_action_episode(
     actions = np.asarray(source["action"], dtype=np.float64)
     timestamps = np.asarray(source["timestamp"], dtype=np.float64)
     if actions.shape != states.shape:
-        raise ValueError(
-            "action and observation.state must share the same shape"
-        )
+        raise ValueError("action and observation.state must share the same shape")
     segmentation = segment_episode(states, timestamps, selected_config)
     segments: list[dict[str, Any]] = []
     for segment in segmentation["segments"]:
@@ -201,9 +148,7 @@ def build_action_episode(
                 "start_frame": start,
                 "end_frame": end,
                 "frame_count": end - start + 1,
-                "coordination_relation": segment[
-                    "coordination_relation"
-                ],
+                "coordination_relation": segment["coordination_relation"],
                 "current_state": _round_vector(states[start]),
                 **target,
             }
@@ -211,8 +156,7 @@ def build_action_episode(
     record = {
         "schema": ACTION_EPISODE_SCHEMA,
         "episode_id": (
-            episode.source_episode_id
-            or f"episode_{episode.episode_index:06d}"
+            episode.source_episode_id or f"episode_{episode.episode_index:06d}"
         ),
         "episode_index": episode.episode_index,
         "task": episode.task,
@@ -223,9 +167,7 @@ def build_action_episode(
         "segments": segments,
         "segmentation": {
             key: value
-            for key, value in serializable_segmentation(
-                segmentation
-            ).items()
+            for key, value in serializable_segmentation(segmentation).items()
             if key
             in {
                 "method",
@@ -234,6 +176,9 @@ def build_action_episode(
                 "boundaries",
                 "per_arm_boundaries",
                 "boundary_evidence",
+                "raw_boundaries",
+                "raw_segments",
+                "still_refinement",
             }
         },
     }
@@ -262,9 +207,7 @@ def generate_action_dataset(
         "schema": ACTION_DATASET_SCHEMA,
         "success_only": True,
         "episode_count": len(records),
-        "segment_count": sum(
-            len(record["segments"]) for record in records
-        ),
+        "segment_count": sum(len(record["segments"]) for record in records),
         "episodes": records,
     }
 
@@ -289,9 +232,7 @@ def validate_action_episode(record: Mapping[str, Any]) -> None:
         raise ValueError("action episode must contain segments")
     forbidden = FORBIDDEN_COT_KEYS & set(_walk_keys(record))
     if forbidden:
-        raise ValueError(
-            f"action-only data contains CoT fields: {sorted(forbidden)}"
-        )
+        raise ValueError(f"action-only data contains CoT fields: {sorted(forbidden)}")
     previous_end = -1
     for expected_index, segment in enumerate(segments):
         if int(segment["segment_index"]) != expected_index:
@@ -346,12 +287,6 @@ class TemplateReasoner:
             "the commanded motion only and does not claim contact, grasp, "
             "placement, or task success."
         )
-
-
-def _data_url(path: Path) -> str:
-    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-    payload = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{payload}"
 
 
 class OpenAICompatibleReasoner:
@@ -425,64 +360,33 @@ class OpenAICompatibleReasoner:
                     "atomic motion is appropriate for continuing the task. "
                     "Do not cite the label or target as justification; do not "
                     "claim contact, grasp, placement, or success unless it is "
-                    "already visible. Return JSON: {\"reasoning\":\"...\"}."
+                    'already visible. Return JSON: {"reasoning":"..."}.'
                 ),
             ]
         )
-        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-        for role, path in zip(
-            request.image_roles,
-            request.image_paths,
-        ):
-            content.append(
-                {"type": "text", "text": f"Image role: {role}"}
-            )
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": _data_url(path)},
-                }
-            )
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You create supervised pre-action robot reasoning. "
-                        "Use only current and past evidence. Output strict JSON."
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-        }
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        http_request = urllib.request.Request(
-            f"{self.endpoint}/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(
-            http_request,
+        body = post_chat(
+            endpoint=self.endpoint,
+            payload={
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You create supervised pre-action robot reasoning. Use only current and past evidence. Output strict JSON.",
+                    },
+                    {
+                        "role": "user",
+                        "content": multimodal_content(
+                            text, request.image_paths, request.image_roles
+                        ),
+                    },
+                ],
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            },
             timeout=self.timeout,
-        ) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        content_value = body["choices"][0]["message"]["content"]
-        if isinstance(content_value, list):
-            content_value = "".join(
-                str(item.get("text", ""))
-                for item in content_value
-                if isinstance(item, dict)
-            )
-        match = re.search(r"\{.*\}", str(content_value), re.DOTALL)
-        if match is None:
-            raise ValueError("reasoner response does not contain JSON")
-        value = json.loads(match.group(0))
+            api_key=self.api_key,
+        )
+        value, _hidden, _finish = _response_parts(body)
         reasoning = str(value.get("reasoning", "")).strip()
         if not reasoning:
             raise ValueError("reasoner returned empty reasoning")
@@ -557,14 +461,20 @@ def _assistant_response(
             "num_chunks",
         )
     }
-    return (
-        f"<think>\n{normalized}\n</think>\n\n"
-        + json.dumps(
-            answer,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+    final_sentence = cot_final_action_sentence(
+        str(target["left_action"]),
+        str(target["right_action"]),
+        int(target["num_chunks"]),
+    )
+    normalized = normalized.rstrip()
+    if normalized[-1:] not in ".!?":
+        normalized += "."
+    normalized = f"{normalized} {final_sentence}"
+    return f"<think>\n{normalized}\n</think>\n\n" + json.dumps(
+        answer,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
 
 
@@ -581,22 +491,14 @@ def build_cot_rows(
     source = load_episode(data_root, episode_index)
     states = np.asarray(source["observation.state"], dtype=np.float64)
     segments = list(action_episode["segments"])
-    requested_frames = {
-        int(segment["start_frame"]) for segment in segments
-    }
+    requested_frames = {int(segment["start_frame"]) for segment in segments}
     requested_frames.update(
-        int(segments[index - 1]["start_frame"])
-        for index in range(1, len(segments))
+        int(segments[index - 1]["start_frame"]) for index in range(1, len(segments))
     )
     videos = {
-        camera: video_path(data_root, episode_index, camera)
-        for camera in CAMERA_KEYS
+        camera: video_path(data_root, episode_index, camera) for camera in CAMERA_KEYS
     }
-    asset_root = (
-        Path(output_dir)
-        / "assets"
-        / f"episode_{episode_index:06d}"
-    )
+    asset_root = Path(output_dir) / "assets" / f"episode_{episode_index:06d}"
     assets = materialize_camera_frames(
         videos,
         {camera: requested_frames for camera in CAMERA_KEYS},
@@ -606,11 +508,7 @@ def build_cot_rows(
     history_actions: list[str] = []
     for index, segment in enumerate(segments):
         current_frame = int(segment["start_frame"])
-        previous_frame = (
-            int(segments[index - 1]["start_frame"])
-            if index > 0
-            else None
-        )
+        previous_frame = int(segments[index - 1]["start_frame"]) if index > 0 else None
         roles: list[str] = []
         image_paths: list[Path] = []
         image_frames: list[int] = []
@@ -624,14 +522,11 @@ def build_cot_rows(
             image_paths.append(assets[(camera, current_frame)])
             image_frames.append(current_frame)
         relative_images = [
-            path.relative_to(Path(output_dir)).as_posix()
-            for path in image_paths
+            path.relative_to(Path(output_dir)).as_posix() for path in image_paths
         ]
         current_state = _named_state(states[current_frame])
         previous_state = (
-            _named_state(states[previous_frame])
-            if previous_frame is not None
-            else None
+            _named_state(states[previous_frame]) if previous_frame is not None else None
         )
         target = {
             key: segment[key]
@@ -645,8 +540,7 @@ def build_cot_rows(
             )
         }
         sample_id = (
-            f"episode_{episode_index:06d}"
-            f"__segment_{int(segment['segment_index']):03d}"
+            f"episode_{episode_index:06d}__segment_{int(segment['segment_index']):03d}"
         )
         reasoning = reasoner.generate(
             ReasoningRequest(
@@ -759,6 +653,18 @@ def validate_cot_row(row: Mapping[str, Any]) -> None:
     target = row.get("target")
     if not isinstance(target, Mapping):
         raise ValueError("CoT row target metadata is required")
+    closing = cot_final_action_sentence(
+        str(target["left_action"]),
+        str(target["right_action"]),
+        int(target["num_chunks"]),
+    )
+    think_match = re.match(
+        r"\s*<think>\s*(.*?)\s*</think>",
+        assistant,
+        re.DOTALL,
+    )
+    if think_match is None or not think_match.group(1).rstrip().endswith(closing):
+        raise ValueError("CoT must end with the exact supervised action sentence")
     for value in (
         json.dumps(target["guide_action"], separators=(",", ":")),
         str(target["sub_task"]),

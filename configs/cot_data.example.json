@@ -1,0 +1,18 @@
+{
+  "pipeline": "cot_data",
+  "input_root": "/path/to/aligned-normal-dataset",
+  "output_root": "/path/to/new-normal-cot-release",
+  "endpoint_file": "/path/to/endpoints.txt",
+  "expected_endpoints": 8,
+  "model": "Qwen/Qwen3.8-Flash-Next",
+  "workers": 64,
+  "batch_size": 256,
+  "max_rounds": 4,
+  "job_attempts": 3,
+  "max_tokens": 3072,
+  "timeout": 600.0,
+  "expected_rows": 326702,
+  "expected_episodes": 27487,
+  "expected_corrections": 61,
+  "require_no_short_same_action": true
+}

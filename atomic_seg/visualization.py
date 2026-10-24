@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import json
 import shutil
 import zipfile
@@ -11,10 +10,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from .io import CAMERA_KEYS, SuccessEpisode, load_episode, video_path
-from .media import materialize_camera_frames
-from .segmentation import segment_episode, serializable_segmentation
-
+from atomic_seg.io import CAMERA_KEYS, SuccessEpisode, load_episode, video_path
+from atomic_seg.segmentation import segment_episode, serializable_segmentation
 
 ACTION_COLORS = {
     "still": "#d8dee9",
@@ -29,8 +26,7 @@ ACTION_COLORS = {
 }
 
 
-def _escape(value: Any) -> str:
-    return html.escape(str(value), quote=True)
+from atomic_seg.common.rendering import escape as _escape
 
 
 def _clean_text_file(value: str) -> str:
@@ -57,9 +53,7 @@ def _polyline(
     denominator = max(len(array) - 1, 1)
     for index, value in enumerate(array):
         x = x0 + width * index / denominator
-        y = y0 + height * (
-            1.0 - min(max(float(value) / maximum, 0.0), 1.0)
-        )
+        y = y0 + height * (1.0 - min(max(float(value) / maximum, 0.0), 1.0))
         points.append(f"{x:.2f},{y:.2f}")
     return " ".join(points)
 
@@ -123,16 +117,13 @@ def write_segmentation_svg(
         '<rect width="100%" height="100%" fill="#eceff4"/>',
         (
             f'<text x="{margin}" y="42" class="title">'
-            f'Episode {episode.episode_index}: Atomic Segmentation</text>'
+            f"Episode {episode.episode_index}: Atomic Segmentation</text>"
         ),
-        (
-            f'<text x="{margin}" y="68" class="subtitle">'
-            f'{_escape(episode.task)}</text>'
-        ),
+        (f'<text x="{margin}" y="68" class="subtitle">{_escape(episode.task)}</text>'),
         (
             f'<text x="{margin}" y="92" class="subtitle">'
-            f'{frame_count} frames · {len(segments)} atomic segments · '
-            f'success-only demonstration</text>'
+            f"{frame_count} frames · {len(segments)} atomic segments · "
+            f"success-only demonstration</text>"
         ),
         (
             f'<rect x="{margin}" y="{energy_top}" width="{plot_width}" '
@@ -213,7 +204,7 @@ def write_segmentation_svg(
                 parts.append(
                     f'<text x="{x + block_width / 2:.2f}" y="{y + 32}" '
                     f'text-anchor="middle" class="label">'
-                    f'{_escape(action)}</text>'
+                    f"{_escape(action)}</text>"
                 )
     parts.extend(
         [
@@ -221,22 +212,10 @@ def write_segmentation_svg(
                 f'<text x="{margin}" y="{summary_top - 20}" class="label">'
                 "Atomic segment table</text>"
             ),
-            (
-                f'<text x="{margin}" y="{summary_top}" class="table">'
-                "#</text>"
-            ),
-            (
-                f'<text x="{margin + 55}" y="{summary_top}" class="table">'
-                "frames</text>"
-            ),
-            (
-                f'<text x="{margin + 190}" y="{summary_top}" class="table">'
-                "left</text>"
-            ),
-            (
-                f'<text x="{margin + 360}" y="{summary_top}" class="table">'
-                "right</text>"
-            ),
+            (f'<text x="{margin}" y="{summary_top}" class="table">#</text>'),
+            (f'<text x="{margin + 55}" y="{summary_top}" class="table">frames</text>'),
+            (f'<text x="{margin + 190}" y="{summary_top}" class="table">left</text>'),
+            (f'<text x="{margin + 360}" y="{summary_top}" class="table">right</text>'),
             (
                 f'<text x="{margin + 530}" y="{summary_top}" class="table">'
                 "coordination</text>"
@@ -253,10 +232,7 @@ def write_segmentation_svg(
             )
         values = (
             str(index),
-            (
-                f"{segment['start_frame']}–"
-                f"{segment['end_frame']}"
-            ),
+            (f"{segment['start_frame']}–{segment['end_frame']}"),
             str(segment["left_action"]),
             str(segment["right_action"]),
             str(segment["coordination_relation"]),
@@ -269,10 +245,7 @@ def write_segmentation_svg(
             margin + 530,
         )
         for x, value in zip(positions, values):
-            parts.append(
-                f'<text x="{x}" y="{y}" class="table">'
-                f'{_escape(value)}</text>'
-            )
+            parts.append(f'<text x="{x}" y="{y}" class="table">{_escape(value)}</text>')
     parts.append("</svg>")
     destination.write_text("\n".join(parts) + "\n", encoding="utf-8")
 
@@ -306,10 +279,7 @@ def write_episode_html(
 
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    root = Path(output_root)
-    rows_by_segment = {
-        int(row["segment_index"]): row for row in cot_rows
-    }
+    rows_by_segment = {int(row["segment_index"]): row for row in cot_rows}
     media_dir = (
         destination.parent
         / "media"
@@ -320,9 +290,7 @@ def write_episode_html(
     for camera, source in videos.items():
         target = media_dir / f"{camera}.mp4"
         shutil.copy2(source, target)
-        local_videos[camera] = target.relative_to(
-            destination.parent
-        ).as_posix()
+        local_videos[camera] = target.relative_to(destination.parent).as_posix()
     cards = []
     for segment in action_episode["segments"]:
         index = int(segment["segment_index"])
@@ -346,19 +314,19 @@ def write_episode_html(
             <section class="segment" id="segment-{index}">
               <header>
                 <h2>Segment {index}: frames
-                  {segment['start_frame']}–{segment['end_frame']}</h2>
-                <span class="badge">{_escape(segment['primary_action_verb'])}</span>
+                  {segment["start_frame"]}–{segment["end_frame"]}</h2>
+                <span class="badge">{_escape(segment["primary_action_verb"])}</span>
               </header>
               <div class="frames">{images}</div>
               <div class="columns">
                 <div>
                   <h3>Action-only supervision</h3>
-                  <p>{_escape(segment['sub_task'])}</p>
+                  <p>{_escape(segment["sub_task"])}</p>
                   <dl>
                     <dt>coordination</dt>
-                    <dd>{_escape(segment['coordination_relation'])}</dd>
+                    <dd>{_escape(segment["coordination_relation"])}</dd>
                     <dt>num_chunks</dt>
-                    <dd>{segment['num_chunks']}</dd>
+                    <dd>{segment["num_chunks"]}</dd>
                     <dt>guide_action</dt>
                     <dd><code>{_escape(guide_action)}</code></dd>
                   </dl>
@@ -385,7 +353,7 @@ def write_episode_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Episode {action_episode['episode_index']} complete visualization</title>
+  <title>Episode {action_episode["episode_index"]} complete visualization</title>
   <style>
     :root {{ color-scheme: light; --bg:#eceff4; --panel:#fff;
       --ink:#2e3440; --muted:#4c566a; --blue:#5e81ac; }}
@@ -420,13 +388,13 @@ def write_episode_html(
 </head>
 <body>
 <main>
-  <h1>Episode {action_episode['episode_index']}: Complete Successful Episode</h1>
-  <p class="meta">{_escape(action_episode['task'])}</p>
-  <p class="meta">{action_episode['frame_count']} frames ·
-    {len(action_episode['segments'])} atomic segments ·
+  <h1>Episode {action_episode["episode_index"]}: Complete Successful Episode</h1>
+  <p class="meta">{_escape(action_episode["task"])}</p>
+  <p class="meta">{action_episode["frame_count"]} frames ·
+    {len(action_episode["segments"])} atomic segments ·
     all three complete camera streams</p>
   <section class="videos">{video_blocks}</section>
-  {''.join(cards)}
+  {"".join(cards)}
 </main>
 </body>
 </html>
@@ -451,9 +419,7 @@ def build_episode_visual_assets(
         np.asarray(source["timestamp"], dtype=np.float64),
     )
     segmentation_path = (
-        root
-        / "segmentation"
-        / f"episode_{episode.episode_index:06d}.svg"
+        root / "segmentation" / f"episode_{episode.episode_index:06d}.svg"
     )
     write_segmentation_svg(
         segmentation_path,
@@ -476,11 +442,7 @@ def build_episode_visual_assets(
         + "\n",
         encoding="utf-8",
     )
-    episode_path = (
-        root
-        / "episodes"
-        / f"episode_{episode.episode_index:06d}.html"
-    )
+    episode_path = root / "episodes" / f"episode_{episode.episode_index:06d}.html"
     videos = {
         camera: video_path(data_root, episode.episode_index, camera)
         for camera in CAMERA_KEYS
@@ -509,11 +471,11 @@ def write_visualization_index(
     cards = "".join(
         f"""
         <article>
-          <h2>Episode {entry['episode_index']}</h2>
-          <p>{_escape(entry['task'])}</p>
-          <a href="{_escape(entry['segmentation_svg'])}">
+          <h2>Episode {entry["episode_index"]}</h2>
+          <p>{_escape(entry["task"])}</p>
+          <a href="{_escape(entry["segmentation_svg"])}">
             Segmentation visualization</a>
-          <a href="{_escape(entry['episode_html'])}">
+          <a href="{_escape(entry["episode_html"])}">
             Complete episode visualization</a>
         </article>
         """
@@ -576,8 +538,7 @@ def package_visualizations(
         names = archive.namelist()
     counts = {
         "segmentation_svg_count": sum(
-            name.startswith("visualizations/segmentation/")
-            and name.endswith(".svg")
+            name.startswith("visualizations/segmentation/") and name.endswith(".svg")
             for name in names
         ),
         "complete_episode_html_count": sum(
@@ -585,9 +546,7 @@ def package_visualizations(
             and name.endswith(".html")
             for name in names
         ),
-        "complete_camera_video_count": sum(
-            name.endswith(".mp4") for name in names
-        ),
+        "complete_camera_video_count": sum(name.endswith(".mp4") for name in names),
     }
     if counts != {
         "segmentation_svg_count": 3,

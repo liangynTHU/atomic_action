@@ -6,8 +6,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from .geometry import quaternion_angle
-
+from atomic_seg.geometry import quaternion_angle
 
 ARM_OFFSETS = {"left": 0, "right": 8}
 
@@ -96,11 +95,9 @@ def local_motion_statistics(
         "translation_norm": translation_norm,
         "path_length": path_length,
         "vertical_displacement": vertical_displacement,
-        "vertical_ratio": abs(vertical_displacement)
-        / max(translation_norm, 1e-12),
+        "vertical_ratio": abs(vertical_displacement) / max(translation_norm, 1e-12),
         "horizontal_displacement": horizontal_displacement,
-        "horizontal_ratio": horizontal_displacement
-        / max(translation_norm, 1e-12),
+        "horizontal_ratio": horizontal_displacement / max(translation_norm, 1e-12),
         "accumulated_rotation": accumulated_rotation,
         "gripper_trend": float(gripper[end] - gripper[start]),
     }

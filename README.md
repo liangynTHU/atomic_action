@@ -1,332 +1,89 @@
 # Atomic Episode Segmentation
 
-这是一个面向**完全正确机器人演示**的精简数据流水线。仓库只保留：
+按两个数据方向组织：**RoboTwin** 和 **AgiBot / ABC-130k 预训练分割**。RoboTwin 内包含原子动作、正常 CoT 和 native recovery；预训练按数据集选择入口。
 
-1. 从 16 维双臂末端状态和时间戳划分 atomic action；
-2. 生成不带 CoT 的纯动作监督；
-3. 为完整成功 episode 批量生成多模态 CoT 数据；
-4. 为单条成功 episode 生成 CoT 数据；
-5. 生成分割可视化和完整 episode 可视化。
+- [OXE / ABC-130k 非 CoT Pipeline](docs/PRETRAIN_NONCOT.md)：数据集专属 prompt、原始动作格式、真实 Qwen 子任务标注和完整 episode 可视化。
+- 当前 ABC 配置：[pretrain_noncot.same_actions.json](configs/pretrain_noncot.same_actions.json)，只合并相邻左右动作对一致的片段，保留不同动作的边界；32–64 行为长度偏好。
+- 对齐 RoboTwin 学生格式：[pretrain_noncot.robotwin_aligned.json](configs/pretrain_noncot.robotwin_aligned.json)，单段 system、统一历史观测结构、训练行仅 `messages/images`，保留各数据集真实坐标。
+- [AgiBot 分割与标注](docs/AGIBOT.md)：`agibot.sh` / `scripts/agibot.py` 提供完整 episode 的恢复、API 标注、导出与审阅。
+- [ABC 全量生产化说明](docs/ABC130K_128GPU_START_PROMPT.md)：当前通用入口处理配置中选定的样本，全量流式分片 runner 仍需实现；示例配置不能直接代表 130k 全量。
 
-失败、漂移、策略偏差和 recovery 数据不在当前运行范围内。历史研究过程统一记录在
-[`docs/MILESTONES.md`](docs/MILESTONES.md)，但不再作为生产代码入口。
+- [数据 Pipeline 统一入口](/mnt/lyn/workspace/docs/data/README.md)：把目标、输入、输出和机器／卡数描述给执行者或 Codex，按导航选择流程。
+- [Pipeline 运行手册](/mnt/lyn/workspace/docs/data/PIPELINES.md)：配置节点和卡数、启动命令、resume、审计和安装。
+- [System prompt 合同](/mnt/lyn/workspace/docs/data/SYSTEM_PROMPTS.md)：system/user/assistant、single/multi、thinking/no-thinking、guide/chunks。
+- [数据格式](/mnt/lyn/workspace/docs/data_format.md)：正常与 native recovery 的字段、时序、完整合成示例及实验格式差异。
+- [正常 CoT 注意事项](/mnt/lyn/workspace/docs/data/robotwin_cot_guidelines.md)。
+- [代码结构和整理决策](/mnt/lyn/workspace/docs/data/CODE_LAYOUT.md)：模块职责、公共层、保留功能、旧入口迁移。
+- [旧名到新名映射](docs/CODE_REFACTOR_MAP.json)。
+- [Recovery 格式详解](/mnt/lyn/workspace/docs/data/RECOVERY_PIPELINE.md)。
+- [Recovery CoT 质量注意事项](/mnt/lyn/workspace/docs/data/RECOVERY_COT_QUALITY.md)：still／短片段、五风格、动作末句、左右／guide、发布门槛和旧数据重建。
+- [研究里程碑](docs/MILESTONES.md)：历史记录，不作为当前启动命令。
 
-## 1. 最终目录
-
-```text
-atomic_seg/
-  config.py          分割参数
-  features.py        状态特征
-  geometry.py        四元数运算
-  segmentation.py    最终 state-only 双臂分割
-  io.py              数据集、manifest、JSON/JSONL I/O
-  media.py           三相机视频抽帧
-  generation.py      action-only 与 CoT 数据生成
-  visualization.py   两类可视化
-
-scripts/
-  segment_episodes.py
-  generate_action_data.py
-  generate_cot_data.py
-  generate_episode_cot.py
-  build_visualizations.py
-
-schemas/
-  action_dataset.schema.json
-  cot_dataset.schema.json
-
-examples/
-  success_episodes.json
-  visualizations/
-
-docs/
-  MILESTONES.md
-```
-
-运行代码、脚本、schema 和测试均使用稳定功能名称，不使用研究迭代编号。
-
-## 2. 输入数据合同
-
-当前分割算法要求 RoboTwin/LeRobot 风格目录：
-
-```text
-DATA_ROOT/
-  meta/info.json
-  meta/episodes.jsonl
-  data/chunk-000/episode_000000.parquet
-  videos/chunk-000/observation.images.cam_high/episode_000000.mp4
-  videos/chunk-000/observation.images.cam_left_wrist/episode_000000.mp4
-  videos/chunk-000/observation.images.cam_right_wrist/episode_000000.mp4
-```
-
-Parquet 至少包含：
-
-```text
-observation.state   [T, 16]
-action              [T, 16]
-timestamp           [T]
-frame_index         [T]
-```
-
-16 维顺序固定为：
-
-```text
-left xyz + left quaternion(wxyz) + left gripper
-right xyz + right quaternion(wxyz) + right gripper
-```
-
-边界判断只使用 `observation.state` 和 `timestamp`。图像、任务文本、action 和
-success 标签不会移动边界。
-
-## 3. 成功 episode manifest
-
-所有生成入口都要求显式的成功清单：
-
-```json
-{
-  "schema": "successful_episode_manifest",
-  "episodes": [
-    {
-      "episode_index": 18,
-      "success": true,
-      "success_provenance": "Manually verified successful demonstration."
-    }
-  ]
-}
-```
-
-规则：
-
-- `success` 必须严格为 `true`；
-- `success=false` 会立即报错；
-- 不接受 recovery、failure prefix 或结果不明确的轨迹；
-- `task` 可选，缺失时读取 `meta/episodes.jsonl` 的第一条任务文本。
-
-## 4. 安装
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-或者：
+## 快速开始
 
 ```bash
 python -m pip install -e .
-```
-
-## 5. Atomic action 分割
-
-```bash
-python scripts/segment_episodes.py \
-  --data-root /path/to/robotwin-endpose \
-  --manifest /path/to/success_episodes.json \
-  --output-dir artifacts/segmentation
-```
-
-输出每条 episode 的：
-
-- joint boundaries；
-- left/right 独立 boundaries；
-- boundary evidence；
-- 左右臂 primitive timeline；
-- 每段 `left_action` / `right_action`；
-- coordination relation。
-
-核心 Python API：
-
-```python
-from atomic_seg import segment_episode
-
-result = segment_episode(states, timestamps)
-```
-
-算法包含：
-
-- timestamp 归一化的物理速度；
-- motion-energy pause evidence；
-- direction-neutral gripper transition evidence；
-- persistent local phase；
-- successor-trend-onset refinement；
-- 左右臂独立 primitive timeline；
-- 派生的双臂 coordination timeline。
-
-## 6. 生成不带 CoT 的动作数据
-
-```bash
-python scripts/generate_action_data.py \
-  --data-root /path/to/robotwin-endpose \
-  --manifest /path/to/success_episodes.json \
-  --output-dir artifacts/action_data
-```
-
-主要输出：
-
-```text
-artifacts/action_data/train.json
-artifacts/action_data/manifest.json
-```
-
-每个 segment 包含：
-
-```text
-start_frame / end_frame
-left_action / right_action
-primary_action_verb
-sub_task
-guide_action
-num_chunks
-```
-
-数值目标定义为：
-
-```text
-guide_action = action[end_frame] - observation.state[start_frame]
-num_chunks   = ceil((end_frame - start_frame + 1) / 8)
-```
-
-纯动作数据禁止出现 `cot`、`reasoning`、`chain_of_thought` 或
-`assistant_response`。
-
-## 7. 批量生成 CoT 数据
-
-### 7.1 本地结构验证
-
-`template` 模式用于测试格式、抽帧、数据对齐和可视化，不应被当作高质量模型标注：
-
-```bash
-python scripts/generate_cot_data.py \
-  --data-root /path/to/robotwin-endpose \
-  --manifest /path/to/success_episodes.json \
-  --output-dir artifacts/cot_data \
-  --reasoner template
-```
-
-### 7.2 OpenAI-compatible 多模态模型
-
-```bash
-python scripts/generate_cot_data.py \
-  --data-root /path/to/robotwin-endpose \
-  --manifest /path/to/success_manifest.json \
-  --output-dir artifacts/cot_data \
-  --reasoner openai-compatible \
-  --endpoint http://127.0.0.1:8007 \
-  --model Qwen/Qwen3.8-Flash-Next
-```
-
-如服务需要 API key，只设置环境变量，不要写入仓库：
-
-```bash
-export OPENAI_API_KEY='...'
-```
-
-主要输出：
-
-```text
-artifacts/cot_data/action_train.json
-artifacts/cot_data/cot_train.jsonl
-artifacts/cot_data/assets/
-artifacts/cot_data/manifest.json
-```
-
-每个 atomic segment 对应一条 CoT row：
-
-```text
-当前三相机图像
-+ 可选的上一决策点三相机图像
-+ 当前/历史 robot state
-+ 已完成 action history
-→ <think>pre-action reasoning</think>
-→ {guide_action, primary_action_verb, sub_task, num_chunks}
-```
-
-最终 human turn 不包含当前 `guide_action` 或 `sub_task`；当前动作只出现在
-assistant 输出和审计用 `target` 元数据中。
-
-## 8. 单条 episode 生成 CoT
-
-```bash
-python scripts/generate_episode_cot.py \
-  --data-root /path/to/robotwin-endpose \
-  --episode 18 \
-  --output-dir artifacts/episode_18 \
-  --reasoner openai-compatible \
-  --endpoint http://127.0.0.1:8007 \
-  --model Qwen/Qwen3.8-Flash-Next
-```
-
-若 `meta/episodes.jsonl` 没有合适任务文本，可额外传入：
-
-```bash
---task "Hold the Coca-Cola bottle upright after lifting with the right arm"
-```
-
-该入口和批量生成器共用完全相同的实现和数据合同。
-
-## 9. 两类可视化
-
-```bash
-python scripts/build_visualizations.py \
-  --data-root /path/to/robotwin-endpose \
-  --manifest /path/to/three_successful_episodes.json \
-  --output-dir artifacts/visualizations \
-  --zip-path artifacts/atomic_episode_visualizations.zip
-```
-
-`examples/success_episodes.example.json` 是 manifest 模板。请复制到本地、替换为
-经过人工确认的三条成功 episode；脚本要求恰好三条，随后为每条生成两类可视化：
-
-1. `artifacts/visualizations/segmentation/episode_XXXXXX.svg`
-   - 双臂能量；
-   - left/right boundary；
-   - joint coordination boundary；
-   - atomic segment table。
-2. `artifacts/visualizations/episodes/episode_XXXXXX.html`
-   - 三路完整视频；
-   - 每段三相机当前关键帧；
-   - action-only supervision；
-   - 对应的嵌入式 CoT。
-
-总入口：
-
-```text
-artifacts/visualizations/index.html
-```
-
-可直接下载或传输的完整包：
-
-```text
-artifacts/atomic_episode_visualizations.zip
-```
-
-ZIP 包含 3 个分割 SVG、3 个完整 episode HTML、逐段关键帧和 9 路完整相机视频。
-由于这些内容来自本地数据集，`artifacts/`、`visualization_archives/` 和媒体 ZIP
-均被 Git 忽略，不上传到代码仓库。
-
-## 10. 测试
-
-```bash
+# 开发与测试
+python -m pip install -e '.[dev]'
 python -m pytest -q
 ```
 
-测试覆盖：
+复制 configs 中相应示例，填写实际绝对路径和验收条数：
 
-- 时间归一化和 successor onset；
-- 双臂 boundary fusion；
-- success-only 拒绝规则；
-- action-only 无 CoT；
-- CoT target isolation；
-- 使用纯合成轨迹/图片/占位视频生成三个 SVG 和三个完整 episode HTML；
-- 合成 HTML 的所有本地引用存在，合成 ZIP 的 3 SVG、3 HTML、9 MP4 合同成立。
+```bash
+python scripts/run_pipeline.py --config /path/to/run.json --dry-run
+python scripts/run_pipeline.py --config /path/to/run.json
+python scripts/run_pipeline.py --config /path/to/run.json --resume
+```
 
-## 11. 当前范围
+| Pipeline | 配置示例 | 核心模块 |
+|---|---|---|
+| 原子动作划分 | [atomic_actions.example.json](configs/atomic_actions.example.json) | `atomic_seg.atomic_actions` |
+| OXE / ABC 预训练非 CoT | [pretrain_noncot.pilot.json](configs/pretrain_noncot.pilot.json) | `atomic_seg.pretrain` |
+| 正常 CoT 生成 | [cot_data.example.json](configs/cot_data.example.json) | `atomic_seg.cot_data` |
+| 已通过观察与双 critic 的 CoT 发布 | [cot_materialize.example.json](configs/cot_materialize.example.json) | `atomic_seg.cot_data` |
+| Native recovery CoT | [recovery_cot_data.example.json](configs/recovery_cot_data.example.json) | `atomic_seg.recovery_cot` |
 
-当前仓库只处理**完全正确的完整 episode**：
+正常 CoT 入口接受已对齐的 VLM/VLA/manifest。原始 Parquet 请使用手册中的原子动作/通用适配入口。完整 episode recovery 使用单独的 outcome/phase 格式，不能直接拼入四字段 planner 数据。
 
-- 不推断 failure cause；
-- 不处理 drift；
-- 不拼接 policy prefix 与 recovery rollout；
-- 不生成 recovery reasoning；
-- 不把历史 failure/recovery 代码留在生产路径。
+## 正常 RoboTwin CoT 的统一流程
 
-如未来重新开展 failure/recovery 项目，应建立独立仓库或独立 package，而不是再次
-混入这里的成功演示流水线。
+WJH 的视觉依据标准已合入 `atomic_seg/cot_data`。流程是：
+
+```text
+学生当前/历史输入与真实图片
+  → 不看当前答案的 observer
+  → writer 生成正文
+  → grounding critic 与 action critic 分别审核
+  → materialize → 正文审计 → 对齐审计 → release
+```
+
+**支持图片有依据的物体名称、颜色、相对位置、接触和持物描述。** 把已观察事实、任务目标和下一动作意图区分开；夹爪开合值本身不能证明接触或成功。四阶段都上传学生可见的 3/6 张真实图片。writer 和 action critic 只额外看到固定 primitive/subtask/chunks，observer 和 grounding critic 不看当前答案。
+
+正文 55–150 词，五种风格按全局行号分配，不要求固定关键词、虚构历史或备选动作。程序保留原 student system/user/images 和最终动作 JSON 文本，追加标准动作末句。两个 critic 都通过才能接受；冲突及证据不足保存供复核并阻止发布，不使用模板 fallback。
+
+已删除独立 WJH 重写／清理目录、选中行文本重写工具和 evidence merge 审阅分支。still、动作标签和短同动作的数值准备工具输出待标注的动作 JSON，正文由主链重新生成。旧 annotation 必须重新满足当前合同，不能仅凭 `accepted_round` 发布。
+
+生成的 `.results.jsonl` 即时保存成功结果，`.review.jsonl` 保存失败样本，`.requests.jsonl` 保存原始请求。中断后 `--resume` 复用已通过结果。release 与安装产物包含 `work/cot5_annotations.jsonl`、`work/REQUEST_JOURNALS.json` 和对应请求日志。
+
+## 多卡原则
+
+本项目 Qwen3.8-Flash-Next 在 H20 上使用每节点 TP8，一个 endpoint 对应 8 卡。64/128/192 卡分别对应 8/16/24 个 endpoints。正常 CoT 只有一个 writer；recovery 的数据 rank 与模型 TP rank 是两件事。
+
+每个分配节点运行 `scripts/serve_model_node.sh`，coordinator 只启动一次。服务和数据任务分别管理，配置中不再硬编码某次实验的 IP 或 rank 行区间。完整命令见运行手册。
+
+## 代码与协议边界
+
+```text
+atomic_seg/atomic_actions/    原子动作公共 API
+atomic_seg/cot_data/          正常视觉 CoT 四阶段生成、输入准备、审计与发布
+atomic_seg/pretrain/          ABC/OXE、AgiBot、RealOmni 的数据集适配与非 CoT
+atomic_seg/recovery_cot/      Native / manifest-adapter / full-episode recovery
+atomic_seg/common/            文件、模型客户端、数值、CoT envelope、锁、渲染
+atomic_seg/prompt_contract.py 固定 planner system 与 response-mode 合同
+atomic_seg/action_language.py 动作文字与最终动作总结句
+```
+
+预训练非 CoT 使用独立 `atomic_seg.pretrain` adapter/package，复用已有状态分段与模型客户端，OXE/Bridge 和 ABC/YAM 分别声明原始状态及动作合同；旧 ABC V29 专项流程不作为入口。Native recovery 已加入统一 still／短同动作清理和五风格发布约束。V28/V29 不再用作函数或业务模块名，历史数据 schema、图片目录和外部格式 driver 中的标识保留以兼容已有数据。
+
+正常 release 包含 VLM、VLA、动作划分、最终 annotation 和审计报告。生成与安装分开；安装默认拒绝覆盖，显式 `--replace` 会留回退副本。测试使用合成数据或只读检查，不会自动启动 GPU 服务或修改正式训练集。
