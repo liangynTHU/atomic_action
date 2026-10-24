@@ -1,0 +1,146 @@
+AgiBot：在自己的 DevCloud 开发机上运行
+
+一、运行位置和数据要求
+
+以下命令全部在自己的 DevCloud 开发机终端执行。
+模型由本机 TT Switch 请求上游 API，无需本地 GPU。
+本机仍要执行 Parquet 读取、数值分割、视频解码和导出，需要 CPU、内存及磁盘。
+
+开发机必须能访问原始数据：
+/apdcephfs_gy2/share_303214312/leoyizhang/datasets/agibot_beta_v3
+
+并能写入原来的最终输出父目录：
+/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot/run_glm53_flash_xhigh_grounded_v7_split2
+
+仅有代码和 API Token 不够，数据及输出文件系统也必须挂载。
+修改 AGIBOT_SOURCE 可指定开发机实际可访问的源路径。
+续跑同一个输出目录要求数据身份、配置及冻结依赖保持一致。
+
+二、准备代码和 Python
+
+在 DevCloud 上进入代码目录。若没有共享该目录，先把代码部署到开发机，
+并将下面的 cd 换成自己的项目目录。agibot_xxr.env 会自动定位当前项目。
+
+cd /mnt/lyn/workspace/atomic_episode_segmentation
+
+如果 DevCloud 已有包含项目依赖的 Python，激活该环境即可。
+否则使用 Python 3.10 或更高版本创建本项目环境：
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[pretrain]'
+
+安装需要开发机能访问包源。若需代理，使用开发机实际可用的代理。
+不要用新依赖环境续跑已固定为其他依赖版本的生产任务。
+
+激活环境后加载个人配置：
+
+source agibot_xxr.env
+
+该文件把 AGIBOT_PYTHON 设置为当前 python3；
+若此前设置过 AGIBOT_PYTHON，先核对它确实指向开发机的目标环境。
+
+检查依赖和路径：
+
+"$AGIBOT_PYTHON" -c 'import numpy, scipy, pyarrow, av, PIL, h5py; print("Python dependencies OK")'
+test -d "$AGIBOT_SOURCE" && echo "Source directory accessible"
+test -d /apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot && echo "Output parent accessible"
+test -w /apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot && echo "Output parent writable"
+
+缺少数据目录或输出权限时先解决挂载/权限，再继续。
+保留原最终输出路径的要求不能通过改写到 DevCloud 本地目录来满足。
+
+三、配置自己的 TT Switch 和凭证
+
+使用自己在 DevCloud 上安装的 TT Switch。
+已有服务运行时无需重复启动。使用本项目的 Linux x64 安装时：
+
+export PATH="$PWD/tt-switch-cli/bin:$PATH"
+tt-switch-cli start
+tt-switch-cli status
+
+Node.js 要求 18 或更高版本；tt-switch-cli/ 是被 Git 忽略的本地安装，
+仅克隆 Git 仓库时不会带上它，需另外复制安装目录或安装 TT Switch。
+安装方法见 AGIBOT_GLM_QUICKSTART.md 和 tt-switch-cli/README.md。
+
+打开自己的 DevCloud TT Switch 管理页面：
+
+1. 设置 → 腾讯内网 → 内网连接 → API Key / Token：
+   填写自己的 CodeBuddy Key 并保存，按开发机网络情况配置出站代理。
+2. 通用API 页面：
+   复制当前有效的 API Token，确认模型 glm-5.3-flash-ioa 可用。
+
+项目根目录的个人凭证文件：
+
+.api_token_xxr
+    填入自己的 TT Switch 通用 API Token。
+    AgiBot 通过 AGIBOT_API_TOKEN_FILE 自动读取。
+
+.codebuddy_api_token_xxr
+    可以保存自己的 CodeBuddy Key，方便自己配置。
+    AgiBot 不会通过本项目启动脚本自动读取它；
+    仍必须把 Key 保存到上面的 TT Switch 网页设置。
+
+两个文件初始为空。每个文件只放对应凭证，一行，不加引号、
+Bearer 前缀、变量名或注释。两者已经被 Git 忽略，权限设为 600。
+如代码通过 Git 部署到另一台开发机，这两个文件不会随 Git 过去；
+在开发机创建它们时不要覆盖已有凭证：
+
+test -e .api_token_xxr || install -m 600 /dev/null .api_token_xxr
+test -e .codebuddy_api_token_xxr || install -m 600 /dev/null .codebuddy_api_token_xxr
+chmod 600 .api_token_xxr .codebuddy_api_token_xxr
+
+使用开发机编辑器填写文件。不要在共享终端输出凭证内容。
+
+四、检查和试跑
+
+TT Switch 和 AgiBot 都在 DevCloud，直接使用：
+http://127.0.0.1:15721/tencent/v1
+
+无需从数据服务器建立 SSH 模型隧道，也不操作同事的 TT Switch。
+
+先加载个人配置并检查：
+
+source agibot_xxr.env
+bash agibot.sh check
+
+check 检查路径、依赖、配置和带鉴权的模型目录，不发起推理。
+然后发起一次真实小图片请求：
+
+bash agibot.sh probe
+
+probe 成功后，按 AGIBOT_GLM_QUICKSTART.md 第 8 步，
+生成两条 episode 的清单并试跑。保留当前个人配置，
+不执行其中重新加载 agibot_local.env 的命令。
+
+试跑命令写入独立的 _smoke 目录：
+
+bash agibot.sh start --output "${AGIBOT_OUTPUT}_smoke" --selection "$PWD/agibot_smoke_episodes.json"
+bash agibot.sh status --output "${AGIBOT_OUTPUT}_smoke"
+
+五、启动两组正式处理
+
+试跑结果检查后，检查两组：
+
+bash agibot_part1.sh check
+bash agibot_part2.sh check
+
+最终输出路径与原项目相同，分别为 $AGIBOT_OUTPUT/part1/ 和 part2/。
+同事和自己不能同时处理同一组并写入同一个最终输出目录。
+已开始生产的输出会沿用冻结源码及依赖合同，不会因新配置文件而重置。
+
+确定对应组没有旧任务运行后，启动：
+
+mkdir -p .runtime/agibot_split2_xxr
+nohup bash agibot_part1.sh start >> .runtime/agibot_split2_xxr/part1.log 2>&1 &
+echo $! > .runtime/agibot_split2_xxr/part1.pid
+nohup bash agibot_part2.sh start >> .runtime/agibot_split2_xxr/part2.log 2>&1 &
+echo $! > .runtime/agibot_split2_xxr/part2.pid
+
+查看进度：
+
+bash agibot_part1.sh status
+bash agibot_part2.sh status
+
+新终端要重新激活相同 Python 环境，再 source agibot_xxr.env。
+停止和续跑规则见 AGIBOT_SPLIT_START.txt，使用本个人配置和上述日志/PID。

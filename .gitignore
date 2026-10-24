@@ -25,6 +25,8 @@ dist/
 *.log
 .api_token
 .codebuddy_api_token
+/.api_token_xxr
+/.codebuddy_api_token_xxr
 .debug_GPU
 
 /tt-switch-cli/

@@ -306,10 +306,11 @@ def av_error():
     return av.error.InvalidDataError
 
 
-def work(run, settings, endpoints, stage="all", retry_passes=3, *, concurrency=4, api_key=None):
+def work(run, settings, endpoints, stage="all", retry_passes=3, *, concurrency=4, api_key=None,
+         progress_every=1000):
     run = Path(run)
-    if concurrency < 1 or retry_passes < 1:
-        raise ValueError("concurrency and retry passes must be positive")
+    if concurrency < 1 or retry_passes < 1 or progress_every < 1:
+        raise ValueError("concurrency, retry passes and progress interval must be positive")
     if not (run / "inventory/COMMIT.json").is_file():
         raise RuntimeError("source inventory is not committed; initialize must finish before workers start")
     config = read_json(run / "run_config.json")
@@ -322,6 +323,7 @@ def work(run, settings, endpoints, stage="all", retry_passes=3, *, concurrency=4
     identity = digest({"source": str(Path(settings.source_root).resolve()), "settings": expected,
                        "selection": config["selection"]})
     verify_directory(run / "inventory", identity)
+    total = read_json(run / "inventory/summary.json")["episodes"]
     local = threading.local()
 
     def process(row):
@@ -338,6 +340,7 @@ def work(run, settings, endpoints, stage="all", retry_passes=3, *, concurrency=4
     with lock(run / "control/worker.lock"):
         for attempt in range(retry_passes):
             counts = Counter()
+            processed = 0
             started = time.time()
             rows = iter(iter_inventory(run))
             with ThreadPoolExecutor(max_workers=concurrency) as executor:
@@ -356,11 +359,25 @@ def work(run, settings, endpoints, stage="all", retry_passes=3, *, concurrency=4
                         row = pending.pop(future)
                         record = future.result()
                         counts[record["status"]] += 1
+                        processed += 1
+                        percent = 100 * processed / total
                         atomic_json(run / "worker_progress.json", {
                             "concurrency": concurrency, "owner": process_identity(),
                             "updated_at": time.time(), "started_at": started,
-                            "counts": dict(counts), "pass": attempt, "stage": stage})
+                            "counts": dict(counts), "pass": attempt, "stage": stage,
+                            "processed": processed, "total": total, "percent": percent,
+                            "progress_every": progress_every})
                         print(encode({"episode": row["episode_id"], "status": record["status"]}), flush=True)
+                        if processed % progress_every == 0 or processed == total:
+                            print(
+                                f"[AgiBot 进度][{run.name}][第{attempt + 1}轮] "
+                                f"已处理 {processed}/{total} ({percent:.2f}%) | "
+                                f"接受={counts['complete']} | 原始数据舍弃={counts['rejected']} | "
+                                f"标注舍弃={counts['annotation_rejected']} | "
+                                f"待重试={counts['retryable_error']} | 处理错误={counts['processing_error']} | "
+                                f"耗时={(time.time() - started) / 60:.1f}分钟",
+                                flush=True,
+                            )
                         submit()
             summarize(run)
             if not counts["retryable_error"] and not counts["processing_error"]:

@@ -1,0 +1,268 @@
+AgiBot 平分数据集：两个脚本启动说明
+
+一、分组情况
+
+数据清单核对日期：2026-10-24。
+总共 188 个 task，157,473 条 episode。
+
+第一组：agibot_part1.sh，78,737 条 episode。
+第二组：agibot_part2.sh，78,736 条 episode。
+
+按 task 编号、episode 编号排序后交替分配。
+两组没有重复，合起来覆盖全部原始 episode。
+平分的是 episode 数量，实际运行时间和最终接受条数可能不同。
+
+默认模型：glm-5.3-flash-ioa。
+默认推理强度：xhigh。
+默认每组并发 2，两组合计 4。
+默认每组每处理 1000 条 episode 输出一次进度汇总，结束时也输出。
+
+当前数据规则：只生成 16D 双臂动作，按该动作范围视为没有底盘移动。
+底盘位置、姿态和速度辅助字段不作为筛选条件。
+双臂末端位置、末端四元数、夹爪、帧时序和视频仍需通过检查。
+
+本次规则更新使用新的输出父目录，名称末尾为 _16d_split2。
+旧的 _split2 目录保存了旧筛选源码和 rejected 结果。
+要使用新规则，请执行下面新的 AGIBOT_OUTPUT 设置；旧目录不用于本次重跑。
+
+以下命令均在服务器终端执行。
+首次使用时，请先按根目录 AGIBOT_GLM_QUICKSTART.md 配置 TT Switch、
+CodeBuddy 上游密钥、代理和项目 .api_token。
+
+二、准备环境并检查
+
+在同一个服务器终端依次执行：
+
+cd /mnt/lyn/workspace/atomic_episode_segmentation
+source /jizhicfs/peterrao/miniconda3/bin/activate
+export PATH="$PWD/tt-switch-cli/bin:$PATH"
+
+export AGIBOT_CONCURRENCY=2
+export AGIBOT_OUTPUT=/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot/run_glm53_flash_xhigh_grounded_v7_16d_split2
+
+tt-switch-cli start
+tt-switch-cli status
+
+bash agibot_part1.sh check
+bash agibot_part2.sh check
+
+两次检查成功后，再执行第三节。
+check 检查路径、依赖、配置及鉴权模型目录，不调用 GLM 推理。
+
+如果需要加载已有 agibot_local.env 的自定义配置，先执行：
+
+source agibot_local.env
+
+然后重新执行上面的 AGIBOT_CONCURRENCY 和 AGIBOT_OUTPUT 两行 export。
+
+AGIBOT_OUTPUT 是两组共用的父目录。
+两个脚本自动分别使用父目录下的 part1/ 和 part2/。
+新开终端查看进度或续跑时，需要重新进入项目目录并加载同样的环境设置。
+
+三、同时启动两个后台任务
+
+在完成第二节的同一个服务器终端执行：
+
+mkdir -p .runtime/agibot_split2
+
+nohup bash agibot_part1.sh start >> .runtime/agibot_split2/part1.log 2>&1 &
+echo $! > .runtime/agibot_split2/part1.pid
+
+nohup bash agibot_part2.sh start >> .runtime/agibot_split2/part2.log 2>&1 &
+echo $! > .runtime/agibot_split2/part2.pid
+
+这会启动真实数据处理和 GLM 标注。
+两组分别准备数据清单、冻结源码、处理数据并导出结果。
+后台启动后可以关闭终端。
+
+查看两个进程：
+
+ps -fp "$(cat .runtime/agibot_split2/part1.pid)"
+ps -fp "$(cat .runtime/agibot_split2/part2.pid)"
+
+同一组同时运行一个任务。
+
+四、如果想在前台运行
+
+打开两个服务器终端，每个终端先设置第二节的环境。
+
+第一个终端执行：
+
+bash agibot_part1.sh start
+
+第二个终端执行：
+
+bash agibot_part2.sh start
+
+前台运行时保持终端连接。
+需要停止时，在对应终端按 Ctrl+C。
+已经后台启动的任务可以直接通过日志查看。
+
+五、查看日志和进度
+
+两个启动脚本默认每组每处理 1000 条 episode 提示一次。
+前台运行直接显示；后台运行写入对应的 part1.log 或 part2.log。
+
+提示示例（数量仅作格式示例）：
+
+[AgiBot 进度][part1][第1轮] 已处理 1000/78737 (1.27%) | 接受=850 | 原始数据舍弃=100 | 标注舍弃=40 | 待重试=10 | 处理错误=0 | 耗时=120.0分钟
+
+后续在 2000、3000……条时继续提示。
+本轮结束时，即使剩余数量不足 1000 条，也会输出最后一次汇总。
+这里统计本轮已处理的 episode，包含接受、舍弃、错误以及复用缓存的数据。
+续跑或自动重试会开始新的一轮计数，提示中的接受数才是本轮已确认导出的数量。
+
+只查看已输出的每 1000 条进度提示：
+
+rg 'AgiBot 进度' .runtime/agibot_split2/part1.log
+rg 'AgiBot 进度' .runtime/agibot_split2/part2.log
+
+查看第一组日志：
+
+tail -n 50 -f .runtime/agibot_split2/part1.log
+
+查看第二组日志：
+
+tail -n 50 -f .runtime/agibot_split2/part2.log
+
+按 Ctrl+C 退出日志查看，后台任务继续运行。
+
+查看第一组进度：
+
+bash agibot_part1.sh status
+
+查看第二组进度：
+
+bash agibot_part2.sh status
+
+刚启动时如果提示 inventory 未提交，
+等准备数据清单的阶段完成后再执行 status。
+
+六、停止后台任务
+
+先核对进程号对应的命令：
+
+ps -fp "$(cat .runtime/agibot_split2/part1.pid)"
+ps -fp "$(cat .runtime/agibot_split2/part2.pid)"
+
+确认是对应的 AgiBot 任务后，停止需要暂停的那一组。
+
+停止第一组：
+
+kill -TERM "$(cat .runtime/agibot_split2/part1.pid)"
+
+停止第二组：
+
+kill -TERM "$(cat .runtime/agibot_split2/part2.pid)"
+
+七、断点续跑
+
+确认对应的旧进程已经停止。
+重新执行第二节的环境设置，并保留原来的输出父目录。
+
+后台续跑第一组：
+
+nohup bash agibot_part1.sh start >> .runtime/agibot_split2/part1.log 2>&1 &
+echo $! > .runtime/agibot_split2/part1.pid
+
+后台续跑第二组：
+
+nohup bash agibot_part2.sh start >> .runtime/agibot_split2/part2.log 2>&1 &
+echo $! > .runtime/agibot_split2/part2.pid
+
+同一份清单、同一套参数和同一个输出目录会自动恢复。
+已提交阶段和已接受的标注批次可以复用。
+未落盘的模型响应可能重新请求。
+无需额外添加 --resume。
+
+八、输出位置
+
+默认输出父目录：
+
+/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot/run_glm53_flash_xhigh_grounded_v7_16d_split2
+
+第一组结果：
+
+$AGIBOT_OUTPUT/part1/
+
+第二组结果：
+
+$AGIBOT_OUTPUT/part2/
+
+先执行两组 status 刷新正式结果索引：
+
+bash agibot_part1.sh status
+bash agibot_part2.sh status
+
+两份正式结果索引：
+
+$AGIBOT_OUTPUT/part1/accepted.jsonl
+$AGIBOT_OUTPUT/part2/accepted.jsonl
+
+每行的 path 指向该 episode 的正式训练导出目录。
+加载完整结果时，同时读取两份 accepted.jsonl。
+
+九、查看分配信息和预览
+
+查看分配信息，不调用模型：
+
+bash agibot_part1.sh info
+bash agibot_part2.sh info
+
+只准备或验证两组固定清单：
+
+bash agibot_part1.sh split
+
+生成第一组预览：
+
+bash agibot_part1.sh review
+
+生成第二组预览：
+
+bash agibot_part2.sh review
+
+预览分别写入：
+
+$AGIBOT_OUTPUT/part1/preview/
+$AGIBOT_OUTPUT/part2/preview/
+
+浏览器访问方法见 AGIBOT_GLM_QUICKSTART.md 第 11 步。
+
+十、配置和清单说明
+
+当前固定清单位置：
+
+/mnt/lyn/workspace/atomic_episode_segmentation/.runtime/agibot_split2/cf4e3aab183916bd/selection/
+
+该目录包含：
+
+part1.json：第一组 episode 清单。
+part2.json：第二组 episode 清单。
+summary.json：总量及各 task 的分配统计。
+COMMIT.json：固定清单的完整性记录。
+
+两组启动时自动验证并沿用这些清单。
+原始 episode 索引变化时会报错，避免续跑分配变化。
+
+可通过环境变量设置：
+
+AGIBOT_SOURCE：两组共用的原始数据根目录。
+AGIBOT_OUTPUT：两组共用的输出父目录。
+AGIBOT_SPLIT_DIR：可选的共享清单目录，两组使用同一个值。
+AGIBOT_CONCURRENCY：每组并发数。
+AGIBOT_PROGRESS_EVERY：每组每隔多少条 episode 输出进度，默认 1000。
+
+例如 AGIBOT_CONCURRENCY=4 时，两组合计并发为 8。
+需要更频繁地提示时，在启动前执行 export AGIBOT_PROGRESS_EVERY=100。
+其他 AGIBOT_* 模型和 API 配置继续由原来的 agibot.sh 读取。
+
+两个脚本自动管理选择范围和分组输出。
+使用环境变量配置数据和输出，不直接传 --source、--output 或 --selection。
+
+续跑保留原配置。
+更换模型、提示词版本、批大小或数据来源时，使用新的输出父目录。
+原始 episode 索引变化后启动新任务时，还需要新的 AGIBOT_SPLIT_DIR。
+
+详细 Markdown 说明：
+
+AGIBOT_SPLIT_START.md

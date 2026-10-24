@@ -6,6 +6,12 @@ SOURCE_ROOT = "/apdcephfs_gy2/share_303214312/leoyizhang/datasets/agibot_beta_v3
 OUTPUT_ROOT = "/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot"
 MODEL = "glm-5.3-flash-ioa"
 API_BASE = "http://127.0.0.1:15721/tencent/v1"
+BASE_POLICY = "assume_stationary_for_16d_dual_arm"
+BASE_AUXILIARY_FIELDS = frozenset({
+    "observation.states.robot.position",
+    "observation.states.robot.orientation",
+    "actions.robot.velocity",
+})
 CAMERAS = ("head", "head_center_fisheye", "head_left_fisheye", "head_right_fisheye",
            "hand_left", "hand_right", "back_left_fisheye", "back_right_fisheye")
 STUDENT_CAMERAS = ("head", "hand_left", "hand_right")
@@ -23,9 +29,7 @@ class Settings:
     gripper_open: float = 35.0
     gripper_closed: float = 120.0
     gripper_tolerance: float = 0.06
-    base_command_tolerance: float = 1e-6
-    base_translation_tolerance_m: float = 1e-4
-    base_rotation_tolerance_rad: float = 1e-4
+    base_policy: str = BASE_POLICY
     quaternion_norm_tolerance: float = 0.01
     time_tolerance_s: float = 0.001
     video_tolerance_s: float = 0.001
@@ -46,6 +50,8 @@ class Settings:
             raise ValueError("invalid AgiBot calibration or time contract")
         if not set(self.student_cameras) <= set(self.cameras):
             raise ValueError("student cameras must be inspected source cameras")
+        if self.base_policy != BASE_POLICY:
+            raise ValueError("AgiBot requires the 16D dual-arm stationary-base policy")
         if self.reasoning_effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError("unsupported reasoning effort")
         if self.batch_size < 1 or self.max_tokens < 1 or self.semantic_attempts < 1:

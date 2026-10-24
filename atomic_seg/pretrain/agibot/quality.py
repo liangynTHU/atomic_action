@@ -1,11 +1,16 @@
-"""Strict whole-episode gate, with independent source and chassis evidence."""
+"""Validate dual-arm measurements; assume a stationary base for the 16D scope."""
 
 import numpy as np
+
+from .config import BASE_AUXILIARY_FIELDS
 
 
 def inspect_numeric(row, arrays, settings):
     audit = {"whole_episode": True, "trimmed_rows": 0, "reasons": [],
-             "checks": {"numeric": "running", "base": "not_checked", "video": "not_checked"}}
+             "checks": {"numeric": "running", "base": "assumed_stationary_16d", "video": "not_checked"},
+             "base": {"policy": settings.base_policy, "action_dimension": 16,
+                      "stationary_assumed": True, "measured_stationarity_verified": False,
+                      "auxiliary_fields_used": False}}
 
     def reject(code, **evidence):
         audit["reasons"].append({"code": code, **evidence})
@@ -14,6 +19,8 @@ def inspect_numeric(row, arrays, settings):
     if n < 3:
         reject("insufficient_measured_states", count=n)
     for name, feature in row["features"].items():
+        if name in BASE_AUXILIARY_FIELDS:
+            continue
         if name not in arrays:
             reject("missing_numeric_field", field=name)
             continue
@@ -27,10 +34,20 @@ def inspect_numeric(row, arrays, settings):
         audit["checks"]["numeric"] = "failed"
         return audit
     required = {"frame_index", "timestamp", "index", "episode_index", "observation.states.end.position",
-                "observation.states.end.orientation", "observation.states.effector.position",
-                "observation.states.robot.position", "observation.states.robot.orientation", "actions.robot.velocity"}
+                "observation.states.end.orientation", "observation.states.effector.position"}
     if not required <= set(arrays):
         reject("missing_required_numeric_fields", fields=sorted(required - set(arrays)))
+        audit["checks"]["numeric"] = "failed"
+        return audit
+    for name, shape in {
+        "observation.states.end.position": (n, 2, 3),
+        "observation.states.end.orientation": (n, 2, 4),
+        "observation.states.effector.position": (n, 2),
+    }.items():
+        if arrays[name].shape != shape:
+            reject("invalid_16d_dual_arm_shape", field=name, expected=list(shape),
+                   actual=list(arrays[name].shape))
+    if audit["reasons"]:
         audit["checks"]["numeric"] = "failed"
         return audit
     if not np.array_equal(arrays["frame_index"], np.arange(n)):
@@ -52,24 +69,4 @@ def inspect_numeric(row, arrays, settings):
         reject("gripper_outside_calibrated_range", raw_min=raw_grip.min(axis=0).tolist(), raw_max=raw_grip.max(axis=0).tolist())
     audit["checks"]["numeric"] = "failed" if audit["reasons"] else "passed"
     audit["numeric"] = {"source_rows": n, "reference_action_rows": n-1, "max_timestamp_skew_s": float(skew.max())}
-    audit["checks"]["base"] = "running"
-    command = arrays["actions.robot.velocity"]
-    moving = np.any(abs(command) > settings.base_command_tolerance, axis=1)
-    audit["base"] = {"command_max_abs": abs(command).max(axis=0).tolist(), "moving_command_rows": int(moving.sum())}
-    if moving.any():
-        reject("base_motion_command", first_frame=int(np.flatnonzero(moving)[0]))
-    q = arrays["observation.states.robot.orientation"]
-    norm = np.linalg.norm(q, axis=1)
-    invalid = abs(norm-1) > settings.quaternion_norm_tolerance
-    if invalid.any():
-        reject("base_unverifiable", invalid_orientation_rows=int(invalid.sum()), first_frame=int(np.flatnonzero(invalid)[0]))
-    else:
-        q = q / norm[:, None]
-        angle = 2*np.arccos(np.clip(abs(q @ q[0]), 0, 1))
-        displacement = np.linalg.norm(arrays["observation.states.robot.position"] - arrays["observation.states.robot.position"][0], axis=1)
-        audit["base"].update(max_translation_m=float(displacement.max()), max_rotation_rad=float(angle.max()))
-        motion = (displacement > settings.base_translation_tolerance_m) | (angle > settings.base_rotation_tolerance_rad)
-        if motion.any():
-            reject("base_motion_observed", first_frame=int(np.flatnonzero(motion)[0]))
-    audit["checks"]["base"] = "failed" if any(r["code"].startswith("base_") for r in audit["reasons"]) else "passed"
     return audit

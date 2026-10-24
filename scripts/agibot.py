@@ -53,6 +53,8 @@ def checked_settings(args):
         raise ValueError("source and output must be separate, non-overlapping directories")
     if args.concurrency < 1:
         raise ValueError("concurrency must be positive")
+    if args.progress_every < 1:
+        raise ValueError("progress interval must be positive")
     selection = None
     if args.selection:
         selection = json.loads(args.selection.read_text())
@@ -71,11 +73,11 @@ def checked_settings(args):
 
 
 def main():
-    from atomic_seg.pretrain.agibot.config import API_BASE, MODEL, SOURCE_ROOT, OUTPUT_ROOT
+    from atomic_seg.pretrain.agibot.config import API_BASE, BASE_POLICY, MODEL, SOURCE_ROOT, OUTPUT_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="start",
                         choices=["start", "check", "probe", "prepare", "status", "review"])
-    parser.add_argument("--output", type=Path, default=Path(OUTPUT_ROOT) / "run_glm53_flash_xhigh_grounded_v7")
+    parser.add_argument("--output", type=Path, default=Path(OUTPUT_ROOT) / "run_glm53_flash_xhigh_grounded_v7_16d")
     parser.add_argument("--source", default=SOURCE_ROOT)
     parser.add_argument("--selection", type=Path, help="JSON list of exact task/episode_000000 identities; omitted means ALL")
     parser.add_argument("--api-base", default=API_BASE)
@@ -88,10 +90,21 @@ def main():
     parser.add_argument("--object-grounding", action="store_true",
                         help="Use an image-first object ledger before sub_task annotation")
     parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--progress-every", type=int, default=1000,
+                        help="Print a progress summary every N processed episodes per pass (default: 1000)")
     parser.add_argument("--stage", choices=["inspect", "segment", "media", "all"], default="all")
     parser.add_argument("--preview-output", type=Path)
     args = parser.parse_args()
     args.output = args.output.resolve()
+
+    config_path = args.output / "run_config.json"
+    if args.command in {"start", "prepare"} and config_path.is_file():
+        config = json.loads(config_path.read_text())
+        if config["settings"].get("base_policy") != BASE_POLICY:
+            raise ValueError(
+                "output uses the old chassis filtering policy; set a new AGIBOT_OUTPUT "
+                "directory for the 16D dual-arm policy (for example, ending in _16d_split2)"
+            )
 
     if args.command in {"start", "prepare", "status", "review"}:
         source = args.output / "source"
@@ -128,7 +141,8 @@ def main():
     if args.command == "prepare":
         return
     print(json.dumps(work(args.output, settings, [args.api_base], args.stage,
-                          concurrency=args.concurrency, api_key=token), ensure_ascii=False))
+                          concurrency=args.concurrency, api_key=token,
+                          progress_every=args.progress_every), ensure_ascii=False))
 
 
 if __name__ == "__main__":

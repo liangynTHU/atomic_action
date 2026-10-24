@@ -5,6 +5,13 @@
 源 episode 筛选、动作分割、静止处理、16D 合同及 VLM/VLA 行格式保持不变。
 已有旧输出及冻结源码不删除、不覆盖。
 
+当前数据规则：**只生成 16D 双臂参考动作，按动作范围视为没有底盘移动**。
+底盘位置、姿态和速度辅助字段不参与筛选；双臂末端、夹爪、时序及视频继续检查。
+该规则作为 `base_policy=assume_stationary_for_16d_dual_arm` 写入配置和动作合同。
+检查结果记录 `assumed_stationary_16d`，表示动作范围的假定，不表示已验证实际底盘位姿。
+新启动使用 `_16d` / `_16d_split2` 输出目录，已有旧目录继续保留旧筛选代码和结果。
+两组运行见 [分组启动说明](../AGIBOT_SPLIT_START.md)。
+
 ## 固定配置
 
 | 项目 | 默认值 |
@@ -81,7 +88,7 @@ bash agibot.sh review
 `prepare` 仅冻结源码和建立全量清单，不请求 API。默认 source:
 `/apdcephfs_gy2/share_303214312/leoyizhang/datasets/agibot_beta_v3`。
 默认 output:
-`/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot/run_glm53_flash_xhigh_grounded_v7`。
+`/apdcephfs_gy7/share_303588738/peterrao/pretrain_data/Agibot/run_glm53_flash_xhigh_grounded_v7_16d`。
 默认 Python:
 `/jizhicfs/peterrao/miniconda3/envs/cosmos3/bin/python`。
 
@@ -130,13 +137,17 @@ data/<split>/<hash前两位>/<hash>/
 临时目录、SHA256、COMMIT 和原子发布，恢复以完整提交为准。
 `status` 可在生产过程中刷新全量进度和 `accepted.jsonl`。
 
-## 不变的数据规则
+## 当前数据规则
 
-- 数值数组按 metadata 验证形状、长度、有限值，frame/index 连续、时间戳
-  与 30 Hz 一致。缺失、重复、乱序、无效四元数整条舍弃。
-- 任一时刻底盘有运动命令或有效姿态发生运动即舍弃，包括中间移动后回到
-  起点。无法验证的底盘姿态记为 `base_unverifiable` 并舍弃。
-- 底盘命令容差 `1e-6`，位移容差 `1e-4 m`，转动容差 `1e-4 rad`。
+- 双臂及其他参与检查的数值数组按 metadata 验证形状、长度、有限值，frame/index
+  连续、时间戳与 30 Hz 一致。双臂数据缺失、重复、乱序、无效末端四元数整条舍弃。
+- 双臂末端位置必须为 `(N, 2, 3)`、姿态为 `(N, 2, 4)`、夹爪为 `(N, 2)`，
+  构造左右各 8 维的 16D 动作。
+- 对 16D 双臂动作按规则视为没有底盘移动。`observation.states.robot.position`、
+  `observation.states.robot.orientation` 和 `actions.robot.velocity` 为辅助字段，
+  缺失、全零、无效或发生变化都不触发 episode 拒绝；原始数组存在时继续保留，
+  不改写底盘测量。该规则替代旧的 `base_motion_command`、`base_motion_observed`
+  和 `base_unverifiable` 筛选。
 - 8 路相机完整解码，核对 PTS、30 Hz 和真实帧数，使用 LeRobot v3
   `from_timestamp` 偏移。不裁头尾、不补帧、不插值。
 - 分割仍使用末端轨迹算法、双臂静止吸收和同动作内部的 32-64 动作行软

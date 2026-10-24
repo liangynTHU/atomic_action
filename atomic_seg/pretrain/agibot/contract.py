@@ -23,6 +23,9 @@ def action_contract(settings):
         "guide_action": "action[end] - state[start] = measured_state[end+1] - measured_state[start]",
         "quaternion": "wxyz; normalized sign-continuous states; guide is component difference",
         "coordinate_frame": "recorded AgiBot end/flange frame; no invented world-frame transform",
+        "base_policy": {"policy": settings.base_policy, "scope": "16D dual-arm actions",
+                        "stationary_assumed": True, "measured_stationarity_verified": False,
+                        "auxiliary_fields_used": False},
         "gripper": {"quantity": "normalized measured encoder openness proxy, not physical aperture in mm",
                     "formula": "(closed_anchor - measured_encoder) / (closed_anchor - open_anchor)",
                     "open_anchor": settings.gripper_open, "closed_anchor": settings.gripper_closed,
@@ -75,7 +78,8 @@ def student_system(settings):
         "The endpoint is measured_state[end+1], following the final inclusive reference action. "
         "Quaternion guide entries are component differences between sign-continuous quaternions, not a relative rotation. "
         "Zero gripper delta means unchanged. " + RECOMPUTE_GUIDE + CHUNK_COUNT_CONTRACT
-        + "Episodes with moving or unverifiable chassis are excluded. Left/right identify physical arms, not screen sides. "
+        + "This dataset uses 16-D dual-arm actions and assumes no chassis movement under its action-scope policy. "
+        "Left/right identify physical arms, not screen sides. "
         + MULTI_ARM_CONTRACT + PREVIOUS_COMMAND_CONTRACT + NO_THINKING_OUTPUT_CONTRACT
     )
 

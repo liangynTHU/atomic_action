@@ -6,6 +6,8 @@
 - 当前 ABC 配置：[pretrain_noncot.same_actions.json](configs/pretrain_noncot.same_actions.json)，只合并相邻左右动作对一致的片段，保留不同动作的边界；32–64 行为长度偏好。
 - 对齐 RoboTwin 学生格式：[pretrain_noncot.robotwin_aligned.json](configs/pretrain_noncot.robotwin_aligned.json)，单段 system、统一历史观测结构、训练行仅 `messages/images`，保留各数据集真实坐标。
 - [AgiBot 分割与标注](docs/AGIBOT.md)：`agibot.sh` / `scripts/agibot.py` 提供完整 episode 的恢复、API 标注、导出与审阅。
+- [AgiBot 平分两组启动](AGIBOT_SPLIT_START.md)：`agibot_part1.sh` / `agibot_part2.sh` 按固定 episode 清单分别处理一半数据，独立输出并支持续跑。
+- AgiBot 当前使用 16D 双臂动作，按动作范围视为没有底盘移动；新任务使用 `_16d` / `_16d_split2` 输出目录。
 - [ABC 全量生产化说明](docs/ABC130K_128GPU_START_PROMPT.md)：当前通用入口处理配置中选定的样本，全量流式分片 runner 仍需实现；示例配置不能直接代表 130k 全量。
 
 - [数据 Pipeline 统一入口](/mnt/lyn/workspace/docs/data/README.md)：把目标、输入、输出和机器／卡数描述给执行者或 Codex，按导航选择流程。
